@@ -105,7 +105,10 @@ pub fn KWayMergeIterator(
         }
 
         fn pop_internal(it: *Self) ?Value {
-            if (it.k == 0) return null;
+            if (it.k == 0)  {
+                std.log.info("k == 0 top", .{});
+                return null;
+            }
 
             // We update the heap prior to removing the value from the stream. If we updated after
             // stream_pop() instead, when stream_peek() returns Drained we would be unable to order
@@ -114,15 +117,20 @@ pub fn KWayMergeIterator(
                 it.keys[0] = key;
                 it.down_heap();
             } else |err| switch (err) {
-                error.Drained => return null,
+                error.Drained => {
+                    std.log.info("Drained, how", .{});
+                    return null;
+                },
                 error.Empty => {
                     it.swap(0, it.k - 1);
                     it.k -= 1;
                     it.down_heap();
                 },
             }
-            if (it.k == 0) return null;
-
+            if (it.k == 0)  {
+                std.log.info("k == 0 bottom", .{});
+                return null;
+            }
             const root = it.streams[0];
             const value = stream_pop(it.context, root);
 

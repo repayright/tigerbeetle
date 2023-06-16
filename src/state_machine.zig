@@ -425,7 +425,7 @@ pub fn StateMachineType(
 
         fn prefetch_create_accounts(self: *StateMachine, accounts: []const Account) void {
             for (accounts) |*a| {
-                self.forest.grooves.accounts_immutable.prefetch_enqueue(a.id);
+                self.forest.grooves.accounts_immutable.prefetch_enqueue(a.id, .negative_lookup);
             }
             self.forest.grooves.accounts_immutable.prefetch(
                 prefetch_create_accounts_immutable_callback,
@@ -457,10 +457,10 @@ pub fn StateMachineType(
 
         fn prefetch_create_transfers(self: *StateMachine, transfers: []const Transfer) void {
             for (transfers) |*t| {
-                self.forest.grooves.transfers.prefetch_enqueue(t.id);
+                self.forest.grooves.transfers.prefetch_enqueue(t.id, .negative_lookup);
 
                 if (t.flags.post_pending_transfer or t.flags.void_pending_transfer) {
-                    self.forest.grooves.transfers.prefetch_enqueue(t.pending_id);
+                    self.forest.grooves.transfers.prefetch_enqueue(t.pending_id, .positive_lookup);
                     // This prefetch isn't run yet, but enqueue it here as well to save an extra
                     // iteration over transfers.
                     self.forest.grooves.posted.prefetch_enqueue(t.pending_id);
@@ -480,12 +480,12 @@ pub fn StateMachineType(
             for (transfers) |*t| {
                 if (t.flags.post_pending_transfer or t.flags.void_pending_transfer) {
                     if (self.forest.grooves.transfers.get(t.pending_id)) |p| {
-                        self.forest.grooves.accounts_immutable.prefetch_enqueue(p.debit_account_id);
-                        self.forest.grooves.accounts_immutable.prefetch_enqueue(p.credit_account_id);
+                        self.forest.grooves.accounts_immutable.prefetch_enqueue(p.debit_account_id, .positive_lookup);
+                        self.forest.grooves.accounts_immutable.prefetch_enqueue(p.credit_account_id, .positive_lookup);
                     }
                 } else {
-                    self.forest.grooves.accounts_immutable.prefetch_enqueue(t.debit_account_id);
-                    self.forest.grooves.accounts_immutable.prefetch_enqueue(t.credit_account_id);
+                    self.forest.grooves.accounts_immutable.prefetch_enqueue(t.debit_account_id, .positive_lookup);
+                    self.forest.grooves.accounts_immutable.prefetch_enqueue(t.credit_account_id, .positive_lookup);
                 }
             }
 
@@ -503,18 +503,18 @@ pub fn StateMachineType(
                 if (t.flags.post_pending_transfer or t.flags.void_pending_transfer) {
                     if (self.forest.grooves.transfers.get(t.pending_id)) |p| {
                         if (self.forest.grooves.accounts_immutable.get(p.debit_account_id)) |dr_immut| {
-                            self.forest.grooves.accounts_mutable.prefetch_enqueue(dr_immut.timestamp);
+                            self.forest.grooves.accounts_mutable.prefetch_enqueue(dr_immut.timestamp, .positive_lookup);
                         }
                         if (self.forest.grooves.accounts_immutable.get(p.credit_account_id)) |cr_immut| {
-                            self.forest.grooves.accounts_mutable.prefetch_enqueue(cr_immut.timestamp);
+                            self.forest.grooves.accounts_mutable.prefetch_enqueue(cr_immut.timestamp, .positive_lookup);
                         }
                     }
                 } else {
                     if (self.forest.grooves.accounts_immutable.get(t.debit_account_id)) |dr_immut| {
-                        self.forest.grooves.accounts_mutable.prefetch_enqueue(dr_immut.timestamp);
+                        self.forest.grooves.accounts_mutable.prefetch_enqueue(dr_immut.timestamp, .positive_lookup);
                     }
                     if (self.forest.grooves.accounts_immutable.get(t.credit_account_id)) |cr_immut| {
-                        self.forest.grooves.accounts_mutable.prefetch_enqueue(cr_immut.timestamp);
+                        self.forest.grooves.accounts_mutable.prefetch_enqueue(cr_immut.timestamp, .positive_lookup);
                     }
                 }
             }
@@ -541,8 +541,9 @@ pub fn StateMachineType(
         }
 
         fn prefetch_lookup_accounts(self: *StateMachine, ids: []const u128) void {
+            // Function call overhead? Prefetch multiple in one go?
             for (ids) |id| {
-                self.forest.grooves.accounts_immutable.prefetch_enqueue(id);
+                self.forest.grooves.accounts_immutable.prefetch_enqueue(id, .positive_lookup);
             }
 
             self.forest.grooves.accounts_immutable.prefetch(
@@ -557,7 +558,7 @@ pub fn StateMachineType(
             const ids = mem.bytesAsSlice(Event(.lookup_accounts), self.prefetch_input.?);
             for (ids) |id| {
                 if (self.forest.grooves.accounts_immutable.get(id)) |immut| {
-                    self.forest.grooves.accounts_mutable.prefetch_enqueue(immut.timestamp);
+                    self.forest.grooves.accounts_mutable.prefetch_enqueue(immut.timestamp, .positive_lookup);
                 }
             }
 
@@ -575,7 +576,7 @@ pub fn StateMachineType(
 
         fn prefetch_lookup_transfers(self: *StateMachine, ids: []const u128) void {
             for (ids) |id| {
-                self.forest.grooves.transfers.prefetch_enqueue(id);
+                self.forest.grooves.transfers.prefetch_enqueue(id, .positive_lookup);
             }
 
             self.forest.grooves.transfers.prefetch(
@@ -1247,12 +1248,11 @@ pub fn StateMachineType(
                         // AccountImmutables for every transfer.
                         2 * batch_transfers_max,
                     ),
+                    .cache_entries_max = options.cache_entries_accounts,
                     .tree_options_object = .{
-                        .cache_entries_max = options.cache_entries_accounts,
+                        .object_tree = true,
                     },
-                    .tree_options_id = .{
-                        .cache_entries_max = options.cache_entries_accounts,
-                    },
+                    .tree_options_id = .{},
                     .tree_options_index = .{
                         .user_data = .{},
                         .ledger = .{},
@@ -1267,10 +1267,11 @@ pub fn StateMachineType(
                         // AccountMutables for every transfer.
                         2 * batch_transfers_max,
                     ),
+                    .cache_entries_max = options.cache_entries_accounts,
                     .tree_options_object = .{
-                        .cache_entries_max = options.cache_entries_accounts,
+                        .object_tree = true,
                     },
-                    .tree_options_id = {}, // No ID tree at there's one already for AccountsMutable.
+                    .tree_options_id = .{},
                     .tree_options_index = .{
                         .debits_pending = .{},
                         .debits_posted = .{},
@@ -1281,12 +1282,11 @@ pub fn StateMachineType(
                 .transfers = .{
                     // *2 to fetch pending and post/void transfer.
                     .prefetch_entries_max = 2 * batch_transfers_max,
+                    .cache_entries_max = options.cache_entries_transfers,
                     .tree_options_object = .{
-                        .cache_entries_max = options.cache_entries_transfers,
+                        .object_tree = true,
                     },
-                    .tree_options_id = .{
-                        .cache_entries_max = options.cache_entries_transfers,
-                    },
+                    .tree_options_id = .{},
                     .tree_options_index = .{
                         .debit_account_id = .{},
                         .credit_account_id = .{},

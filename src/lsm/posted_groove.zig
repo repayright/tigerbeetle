@@ -114,9 +114,7 @@ pub fn PostedGrooveType(comptime Storage: type, value_count_max: usize) type {
                 allocator,
                 node_pool,
                 grid,
-                .{
-                    .cache_entries_max = options.cache_entries_max,
-                },
+                .{},
             );
             errdefer tree.deinit(allocator);
 

@@ -237,11 +237,6 @@ pub fn parse_args(allocator: std.mem.Allocator) !Command {
             };
         },
         .start => {
-            const groove_config = StateMachine.Forest.groove_config;
-            const AccountsValuesCache = groove_config.accounts_mutable.ObjectTree.TableMutable.ValuesCache;
-            const TransfersValuesCache = groove_config.transfers.ObjectTree.TableMutable.ValuesCache;
-            const PostedValuesCache = groove_config.posted.Tree.TableMutable.ValuesCache;
-
             return Command{
                 .start = .{
                     .args_allocated = args_allocated,
@@ -249,24 +244,9 @@ pub fn parse_args(allocator: std.mem.Allocator) !Command {
                         allocator,
                         addresses orelse fatal("required: --addresses", .{}),
                     ),
-                    .cache_accounts = parse_cache_size_to_count(
-                        tigerbeetle.Account,
-                        AccountsValuesCache,
-                        cache_accounts,
-                        constants.cache_accounts_size_default,
-                    ),
-                    .cache_transfers = parse_cache_size_to_count(
-                        tigerbeetle.Transfer,
-                        TransfersValuesCache,
-                        cache_transfers,
-                        constants.cache_transfers_size_default,
-                    ),
-                    .cache_transfers_posted = parse_cache_size_to_count(
-                        u256, // TODO(#264): Use actual type here, once exposed.
-                        PostedValuesCache,
-                        cache_transfers_posted,
-                        constants.cache_transfers_posted_size_default,
-                    ),
+                    .cache_accounts = 65536,
+                    .cache_transfers = 32768,
+                    .cache_transfers_posted = 65536,
                     .storage_size_limit = parse_storage_size(storage_size_limit),
                     .cache_grid_blocks = parse_cache_size_to_count(
                         [constants.block_size]u8,

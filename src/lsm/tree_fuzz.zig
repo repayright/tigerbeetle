@@ -83,10 +83,8 @@ const cluster = 32;
 const replica = 4;
 const replica_count = 6;
 const node_count = 1024;
-const tree_options = .{
-    // This is the smallest size that set_associative_cache will allow us.
-    .cache_entries_max = 2048,
-};
+const tree_options = .{};
+const cache_entries_max = 2048;
 
 // We must call compact after every 'batch'.
 // Every `lsm_batch_multiple` batches may put/remove `value_count_max` values.
@@ -271,8 +269,10 @@ fn EnvironmentType(comptime table_usage: TableUsage) type {
 
         pub fn get(env: *Environment, key: Key) ?*const Key.Value {
             env.change_state(.fuzzing, .tree_lookup);
+            std.log.info("In get, wtf...", .{});
 
             if (env.tree.lookup_from_memory(env.tree.lookup_snapshot_max, key)) |value| {
+                std.log.info("Got from memory: {}", .{value});
                 env.change_state(.tree_lookup, .fuzzing);
                 return Tree.unwrap_tombstone(value);
             }
@@ -280,6 +280,8 @@ fn EnvironmentType(comptime table_usage: TableUsage) type {
             env.lookup_value = null;
             env.tree.lookup_from_levels(get_callback, &env.lookup_context, env.tree.lookup_snapshot_max, key);
             env.tick_until_state_change(.tree_lookup, .fuzzing);
+
+            std.log.info("Got from levels: {}...", .{env.lookup_value});
             return env.lookup_value;
         }
 
@@ -417,10 +419,10 @@ fn random_id(random: std.rand.Random, comptime Int: type) Int {
     const avg_int: Int = if (random.boolean())
         // 1. We want to cause many collisions.
         //8
-        100 * constants.lsm_growth_factor * tree_options.cache_entries_max
+        100 * constants.lsm_growth_factor * cache_entries_max
     else
         // 2. We want to generate enough ids that the cache can't hold them all.
-        constants.lsm_growth_factor * tree_options.cache_entries_max;
+        constants.lsm_growth_factor * cache_entries_max;
     return fuzz.random_int_exponential(random, Int, avg_int);
 }
 

@@ -539,8 +539,14 @@ pub fn CompactionType(
             var values_out_index = compaction.table_builder.value_count;
 
             assert(values_in.len > 0);
-
             const len = @minimum(values_in.len, values_out.len - values_out_index);
+
+            for (values_in[0..len]) |value_a| {
+                if (value_a.id == 327) {
+                    std.log.info("Copy no drop for: {}", .{value_a});
+                }
+            }
+
             assert(len > 0);
             stdx.copy_disjoint(
                 .exact,
@@ -569,6 +575,10 @@ pub fn CompactionType(
                 values_out_index < values_out.len)
             {
                 const value_a = &values_in_a[values_in_a_index];
+                if (value_a.id == 327) {
+                    std.log.info("Inner copy drop for: {}", .{value_a});
+                }
+
                 values_in_a_index += 1;
                 if (tombstone(value_a)) {
                     continue;
@@ -602,6 +612,9 @@ pub fn CompactionType(
             {
                 const value_a = &values_in_a[values_in_a_index];
                 const value_b = &values_in_b[values_in_b_index];
+                if (value_a.id == 327 or value_b.id == 327) {
+                    std.log.info("Inner merge for {} and {}", .{ value_a, value_b });
+                }
                 switch (compare_keys(key_from_value(value_a), key_from_value(value_b))) {
                     .lt => {
                         values_in_a_index += 1;
@@ -756,6 +769,8 @@ pub fn CompactionType(
             assert(compaction.state == .tables_writing);
             assert(compaction.state.tables_writing.pending == 0);
 
+            std.log.info("COMPACTION WRITE FINISH CALLED", .{});
+
             tracer.end(
                 &compaction.iterator_tracer_slot,
                 .{ .tree_compaction_iter = .{
@@ -783,6 +798,7 @@ pub fn CompactionType(
 
                     compaction.state = .next_tick;
                     compaction.context.grid.on_next_tick(done_on_next_tick, &compaction.next_tick);
+                    std.log.info("COMPACTION exhausted FINISH CALLED", .{});
                 },
             }
         }
