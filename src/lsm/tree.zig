@@ -165,6 +165,9 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type, comptime tree_
         filter_block_hits: u64 = 0,
         filter_block_misses: u64 = 0,
 
+        // TODO: Perhaps we need to wrap this? Perhaps not?
+        active_scope: ?TableMemory.ValueContext = null,
+
         pub const Options = struct {
             object_tree: bool = false,
             // TODO: Do we get rid of this and everywher up the tree?
@@ -235,6 +238,38 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type, comptime tree_
             tree.table_mutable.deinit(allocator);
             tree.table_immutable.deinit(allocator);
             tree.manifest.deinit(allocator);
+        }
+
+        /// Start a new scope. Within a scope, changes can be commited
+        /// or rolled back. Only one scope can be active at a time.
+        pub fn scope_start(tree: *Tree) void {
+            assert(tree.active_scope == null);
+            // TODO: Make this copy more explicit
+            tree.active_scope = tree.table_mutable.value_context;
+        }
+
+        pub fn scope_commit(tree: *Tree) void {
+            // We don't need to do anything to commit a scope; we can just drop it
+            assert(tree.active_scope != null);
+            tree.active_scope = null;
+        }
+
+        pub fn scope_rollback(tree: *Tree) void {
+            // TODO: Note how we do the first one here, and the second one in Groove...
+            // To rollback a scope, we do two things, at two different logical levels:
+            // 1. Reset the Tree's table_mutable to the index in the scope. Since table_mutable is a log
+            //    of operations, this effectively undoes them
+            // 2. Revert our objects_cache back to the state when the scope was taken. This is a bit more
+            //    involved. We have eviction handling (objects_cache is a hybrid SetAssociateCache with a
+            //    HashMap to catch evictions). When a scope is definied, our eviction handler will do an
+            //    extra check to see if the value being evicted is because of an update. If so, it'll store
+            //    the _first_ instance in a map. On revert, we apply the values in this map over the current
+            //    object cache.
+            _ = tree;
+
+            // TODO: Make this copy more explicit
+            tree.table_mutable.value_context = tree.active_scope;
+            tree.active_scope = null;
         }
 
         pub fn put(tree: *Tree, value: *const Value) void {

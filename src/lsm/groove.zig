@@ -317,10 +317,6 @@ pub fn GrooveType(
         },
     });
 
-    // TODO: For now, just a hack to only exist for the object tree. This should be comptime
-    // generated for all trees.
-    const _Scope = struct { value_context: _ObjectTree.TableMemory.ValueContext = .{} };
-
     // Verify no hash collisions between all the trees:
     comptime var hashes: []const u128 = &.{_ObjectTree.hash};
 
@@ -434,7 +430,6 @@ pub fn GrooveType(
         pub const ObjectsCache = _ObjectsCache;
 
         const Grid = GridType(Storage);
-        const Scope = _Scope;
 
         const Callback = fn (*Groove) void;
         const JoinOp = enum {
@@ -477,7 +472,6 @@ pub fn GrooveType(
         // "A set associative cache of values shared by trees with the same key/value sizes.
         // The value type will be []u8 and this will be shared by trees with the same value size."
         objects_cache: *ObjectsCache,
-        active_scope: ?Scope = null,
 
         pub const Options = struct {
             /// The maximum number of objects that might be prefetched by a batch.
@@ -822,30 +816,32 @@ pub fn GrooveType(
             }
         }
 
-        /// Start a new scope. Within a scope, changes can be commited
-        /// or rolled back. Only one scope can be active at a time.
         pub fn scope_start(groove: *Groove) void {
             assert(groove.active_scope == null);
-            groove.active_scope = .{};
+            // groove.active_scope = .{};
+            // TODO: Groove level scope work
+
+            inline for (std.meta.fields(IndexTrees)) |field| {
+                @field(groove.indexes, field.name).scope_start();
+            }
         }
 
         pub fn scope_commit(groove: *Groove) void {
-            // We don't need to do anything to commit a scope; we can just drop it
             assert(groove.active_scope != null);
-            groove.active_scope = null;
+            // groove.active_scope = null;
+            // TODO: Groove level scope work
+
+            inline for (std.meta.fields(IndexTrees)) |field| {
+                @field(groove.indexes, field.name).scope_commit();
+            }
         }
 
         pub fn scope_rollback(groove: *Groove) void {
-            // To rollback a scope, we do two things, at two different logical levels:
-            // 1. Reset the Tree's table_mutable to the index in the scope. Since table_mutable is a log
-            //    of operations, this effectively undoes them
-            // 2. Revert our objects_cache back to the state when the scope was taken. This is a bit more
-            //    involved. We have eviction handling (objects_cache is a hybrid SetAssociateCache with a
-            //    HashMap to catch evictions). When a scope is definied, our eviction handler will do an
-            //    extra check to see if the value being evicted is because of an update. If so, it'll store
-            //    the _first_ instance in a map. On revert, we apply the values in this map over the current
-            //    object cache.
-            _ = groove;
+            // TODO: Groove level scope work
+
+            inline for (std.meta.fields(IndexTrees)) |field| {
+                @field(groove.indexes, field.name).scope_rollback();
+            }
         }
 
         // /// Update the object and index trees by diff'ing the old and new values.
