@@ -53,6 +53,7 @@ pub fn CompactionType(
     comptime Table: type,
     comptime Tree: type,
     comptime Storage: type,
+    comptime TableMemory: type,
 ) type {
     return struct {
         const Compaction = @This();
@@ -74,7 +75,7 @@ pub fn CompactionType(
         const tombstone = Table.tombstone;
 
         pub const TableInfoA = union(enum) {
-            immutable: []const Value,
+            immutable: TableMemory.Iterator,
             disk: TableInfo,
         };
 
@@ -110,6 +111,8 @@ pub fn CompactionType(
         data_blocks: [2]BlockPtr,
         table_builder: Table.Builder,
         last_keys_in: [2]?Key = .{ null, null },
+        immutable_values_in: []Value,
+        immutable_values_exhausted: bool = false,
 
         /// Manifest log appends are queued up until `finish()` is explicitly called to ensure
         /// they are applied deterministically relative to other concurrent compactions.
@@ -186,6 +189,11 @@ pub fn CompactionType(
             var table_builder = try Table.Builder.init(allocator);
             errdefer table_builder.deinit(allocator);
 
+            // TODO, only if we're for an immutable table. This holds the values yielded from
+            // the iterator.
+            var immutable_values_in = try allocator.alloc(Value, TableMemory.k_sort_interval);
+            errdefer allocator.free(immutable_values_in);
+
             return Compaction{
                 .tree_name = tree_name,
 
@@ -200,6 +208,7 @@ pub fn CompactionType(
                 .drop_tombstones = undefined,
 
                 .values_in = .{ &.{}, &.{} },
+                .immutable_values_in = immutable_values_in,
 
                 .input_state = .remaining,
                 .state = .idle,
@@ -215,6 +224,7 @@ pub fn CompactionType(
             allocator.free(compaction.index_block_a);
             compaction.iterator_b.deinit(allocator);
             compaction.iterator_a.deinit(allocator);
+            allocator.free(compaction.immutable_values_in.ptr[0..TableMemory.k_sort_interval]);
         }
 
         pub fn reset(compaction: *Compaction) void {
@@ -226,6 +236,32 @@ pub fn CompactionType(
                 compaction.context.grid.forfeit(grid_reservation);
                 compaction.grid_reservation = null;
             }
+        }
+
+        fn fill_immutable_values(compaction: *Compaction) void {
+            std.log.info("Entering fill immutable values...", .{});
+            // Reset our slice
+            compaction.immutable_values_in = compaction.immutable_values_in.ptr[0..TableMemory.k_sort_interval];
+
+            var i: u32 = 0;
+            var immutable_values_in = compaction.immutable_values_in;
+            var iterator = compaction.context.table_info_a.immutable;
+            while (iterator.pop()) |value| : (i += 1) {
+                std.log.info("Popped: {}", .{value});
+                if (i > 0 and compare_keys(key_from_value(&immutable_values_in[i - 1]), key_from_value(&value)) == .eq) {
+                    i -= 1;
+                }
+
+                immutable_values_in[i] = value;
+                if (i == compaction.immutable_values_in.len - 1) {
+                    break;
+                }
+            } else {
+                std.log.info("Set to exhausted...", .{});
+                compaction.immutable_values_exhausted = true;
+            }
+            std.log.info("We just filled {} values from our iterator...", .{i});
+            compaction.immutable_values_in = compaction.immutable_values_in[0..i];
         }
 
         /// The compaction's input tables are:
@@ -279,6 +315,7 @@ pub fn CompactionType(
             );
             assert(drop_tombstones or context.level_b < constants.lsm_levels - 1);
 
+            std.log.info("SETTING COMPACTION", .{});
             compaction.* = .{
                 .tree_name = compaction.tree_name,
 
@@ -291,6 +328,7 @@ pub fn CompactionType(
                 .context = context,
 
                 .values_in = .{ &.{}, &.{} },
+                .immutable_values_in = compaction.immutable_values_in,
 
                 .grid_reservation = grid_reservation,
                 .drop_tombstones = drop_tombstones,
@@ -338,8 +376,7 @@ pub fn CompactionType(
                 });
 
                 switch (context.table_info_a) {
-                    .immutable => |values| {
-                        compaction.values_in[0] = values;
+                    .immutable => {
                         compaction.loop_start();
                     },
                     .disk => |table_info| {
@@ -396,7 +433,12 @@ pub fn CompactionType(
                 // Still have values on this input_level, no need to refill.
                 compaction.iterator_check_finish(input_level);
             } else if (input_level == .a and compaction.context.table_info_a == .immutable) {
-                // No iterator to call next on.
+                // Potentially fill our immutable values from the TableMemory k-way iterator.
+                if (!compaction.immutable_values_exhausted) {
+                    compaction.fill_immutable_values();
+                    compaction.values_in[0] = compaction.immutable_values_in;
+                }
+
                 compaction.iterator_check_finish(input_level);
             } else {
                 compaction.state = .{ .iterator_next = input_level };
@@ -541,12 +583,6 @@ pub fn CompactionType(
             assert(values_in.len > 0);
             const len = @minimum(values_in.len, values_out.len - values_out_index);
 
-            for (values_in[0..len]) |value_a| {
-                if (value_a.id == 327) {
-                    std.log.info("Copy no drop for: {}", .{value_a});
-                }
-            }
-
             assert(len > 0);
             stdx.copy_disjoint(
                 .exact,
@@ -575,9 +611,6 @@ pub fn CompactionType(
                 values_out_index < values_out.len)
             {
                 const value_a = &values_in_a[values_in_a_index];
-                if (value_a.id == 327) {
-                    std.log.info("Inner copy drop for: {}", .{value_a});
-                }
 
                 values_in_a_index += 1;
                 if (tombstone(value_a)) {
@@ -612,9 +645,7 @@ pub fn CompactionType(
             {
                 const value_a = &values_in_a[values_in_a_index];
                 const value_b = &values_in_b[values_in_b_index];
-                if (value_a.id == 327 or value_b.id == 327) {
-                    std.log.info("Inner merge for {} and {}", .{ value_a, value_b });
-                }
+
                 switch (compare_keys(key_from_value(value_a), key_from_value(value_b))) {
                     .lt => {
                         values_in_a_index += 1;

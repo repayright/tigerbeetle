@@ -669,6 +669,60 @@ pub fn StateMachineType(
             callback(self);
         }
 
+        fn scope_start(self: *StateMachine, comptime operation: Operation) void {
+            comptime assert(operation != .lookup_accounts and operation != .lookup_transfers);
+
+            switch (operation) {
+                .create_accounts => {
+                    self.forest.grooves.accounts_immutable.scope_start();
+                    self.forest.grooves.accounts_mutable.scope_start();
+                },
+                .create_transfers => {
+                    self.forest.grooves.accounts_mutable.scope_start();
+                    self.forest.grooves.transfers.scope_start();
+                    // TODO
+                    // self.forest.grooves.posted
+                },
+                else => unreachable,
+            }
+        }
+
+        fn scope_commit(self: *StateMachine, comptime operation: Operation) void {
+            comptime assert(operation != .lookup_accounts and operation != .lookup_transfers);
+
+            switch (operation) {
+                .create_accounts => {
+                    self.forest.grooves.accounts_immutable.scope_commit();
+                    self.forest.grooves.accounts_mutable.scope_commit();
+                },
+                .create_transfers => {
+                    self.forest.grooves.accounts_mutable.scope_commit();
+                    self.forest.grooves.transfers.scope_commit();
+                    // TODO
+                    // self.forest.grooves.posted
+                },
+                else => unreachable,
+            }
+        }
+
+        fn scope_rollback(self: *StateMachine, comptime operation: Operation) void {
+            comptime assert(operation != .lookup_accounts and operation != .lookup_transfers);
+
+            switch (operation) {
+                .create_accounts => {
+                    self.forest.grooves.accounts_immutable.scope_rollback();
+                    self.forest.grooves.accounts_mutable.scope_rollback();
+                },
+                .create_transfers => {
+                    self.forest.grooves.accounts_mutable.scope_rollback();
+                    self.forest.grooves.transfers.scope_rollback();
+                    // TODO
+                    // self.forest.grooves.posted
+                },
+                else => unreachable,
+            }
+        }
+
         fn execute(
             self: *StateMachine,
             comptime operation: Operation,
@@ -693,6 +747,7 @@ pub fn StateMachineType(
                         if (chain == null) {
                             chain = index;
                             assert(chain_broken == false);
+                            self.scope_start(operation);
                         }
 
                         if (index == events.len - 1) break :blk .linked_event_chain_open;
@@ -720,8 +775,9 @@ pub fn StateMachineType(
                     if (chain) |chain_start_index| {
                         if (!chain_broken) {
                             chain_broken = true;
-                            // Rollback events in LIFO order, excluding this event that broke the chain:
-                            self.rollback(operation, input, chain_start_index, index);
+                            // Our chain has just been broken, rollback the scope we started above
+                            self.scope_rollback(operation);
+
                             // Add errors for rolled back events in FIFO order:
                             var chain_index = chain_start_index;
                             while (chain_index < index) : (chain_index += 1) {
@@ -741,49 +797,15 @@ pub fn StateMachineType(
                 if (chain != null and (!event.flags.linked or result == .linked_event_chain_open)) {
                     chain = null;
                     chain_broken = false;
+
+                    // We've finished this linked chain, and all events have applied successfully.
+                    self.scope_commit(operation);
                 }
             }
             assert(chain == null);
             assert(chain_broken == false);
 
             return @sizeOf(Result(operation)) * count;
-        }
-
-        fn rollback(
-            self: *StateMachine,
-            comptime operation: Operation,
-            input: []const u8,
-            chain_start_index: usize,
-            chain_error_index: usize,
-        ) void {
-            const events = mem.bytesAsSlice(Event(operation), input);
-
-            // We commit events in FIFO order.
-            // We must therefore rollback events in LIFO order with a reverse loop.
-            // We do not rollback `self.commit_timestamp` to ensure that subsequent events are
-            // timestamped correctly.
-            var index = chain_error_index;
-            while (index > chain_start_index) {
-                index -= 1;
-
-                assert(index >= chain_start_index);
-                assert(index < chain_error_index);
-                const event = events[index];
-                assert(event.timestamp <= self.commit_timestamp);
-
-                switch (operation) {
-                    .create_accounts => self.create_account_rollback(&event),
-                    .create_transfers => self.create_transfer_rollback(&event),
-                    else => unreachable,
-                }
-                log.debug("{s} {}/{}: rollback(): {}", .{
-                    @tagName(operation),
-                    index + 1,
-                    events.len,
-                    event,
-                });
-            }
-            assert(index == chain_start_index);
         }
 
         // Accounts that do not fit in the response are omitted.
@@ -849,19 +871,11 @@ pub fn StateMachineType(
                 return create_account_exists(a, e);
             }
 
-            self.forest.grooves.accounts_immutable.put_no_clobber(&AccountImmutable.from_account(a));
-            self.forest.grooves.accounts_mutable.put_no_clobber(&AccountMutable.from_account(a));
+            self.forest.grooves.accounts_immutable.insert(&AccountImmutable.from_account(a));
+            self.forest.grooves.accounts_mutable.insert(&AccountMutable.from_account(a));
 
             self.commit_timestamp = a.timestamp;
             return .ok;
-        }
-
-        fn create_account_rollback(self: *StateMachine, a: *const Account) void {
-            // Need to get the timestamp from the inserted account rather than the one passed in.
-            const timestamp = self.forest.grooves.accounts_immutable.get(a.id).?.timestamp;
-
-            self.forest.grooves.accounts_immutable.remove(a.id);
-            self.forest.grooves.accounts_mutable.remove(timestamp);
         }
 
         fn create_account_exists(a: *const Account, e: *const AccountImmutable) CreateAccountResult {
@@ -969,7 +983,7 @@ pub fn StateMachineType(
 
             var t2 = t.*;
             t2.amount = amount;
-            self.forest.grooves.transfers.put_no_clobber(&t2);
+            self.forest.grooves.transfers.insert(&t2);
 
             var dr_mut_new = dr_mut.*;
             var cr_mut_new = cr_mut.*;
@@ -980,39 +994,11 @@ pub fn StateMachineType(
                 dr_mut_new.debits_posted += amount;
                 cr_mut_new.credits_posted += amount;
             }
-            self.forest.grooves.accounts_mutable.put(&dr_mut_new);
-            self.forest.grooves.accounts_mutable.put(&cr_mut_new);
+            self.forest.grooves.accounts_mutable.upsert(&dr_mut_new);
+            self.forest.grooves.accounts_mutable.upsert(&cr_mut_new);
 
             self.commit_timestamp = t.timestamp;
             return .ok;
-        }
-
-        fn create_transfer_rollback(self: *StateMachine, t: *const Transfer) void {
-            if (t.flags.post_pending_transfer or t.flags.void_pending_transfer) {
-                return self.post_or_void_pending_transfer_rollback(t);
-            }
-
-            const dr_immut = self.forest.grooves.accounts_immutable.get(t.debit_account_id).?;
-            const cr_immut = self.forest.grooves.accounts_immutable.get(t.credit_account_id).?;
-            assert(dr_immut.id == t.debit_account_id);
-            assert(cr_immut.id == t.credit_account_id);
-
-            var dr_mut = self.forest.grooves.accounts_mutable.get(dr_immut.timestamp).?.*;
-            var cr_mut = self.forest.grooves.accounts_mutable.get(cr_immut.timestamp).?.*;
-            assert(dr_mut.timestamp == dr_immut.timestamp);
-            assert(cr_mut.timestamp == cr_immut.timestamp);
-
-            if (t.flags.pending) {
-                dr_mut.debits_pending -= t.amount;
-                cr_mut.credits_pending -= t.amount;
-            } else {
-                dr_mut.debits_posted -= t.amount;
-                cr_mut.credits_posted -= t.amount;
-            }
-            self.forest.grooves.accounts_mutable.put(&dr_mut);
-            self.forest.grooves.accounts_mutable.put(&cr_mut);
-
-            self.forest.grooves.transfers.remove(t.id);
         }
 
         fn create_transfer_exists(t: *const Transfer, e: *const Transfer) CreateTransferResult {
@@ -1095,7 +1081,7 @@ pub fn StateMachineType(
                 if (p.timestamp + p.timeout <= t.timestamp) return .pending_transfer_expired;
             }
 
-            self.forest.grooves.transfers.put_no_clobber(&Transfer{
+            self.forest.grooves.transfers.insert(&Transfer{
                 .id = t.id,
                 .debit_account_id = p.debit_account_id,
                 .credit_account_id = p.credit_account_id,
@@ -1110,7 +1096,8 @@ pub fn StateMachineType(
                 .amount = amount,
             });
 
-            self.forest.grooves.posted.put_no_clobber(t.pending_id, t.flags.post_pending_transfer);
+            // TODO
+            // self.forest.grooves.posted.insert(t.pending_id, t.flags.post_pending_transfer);
 
             var dr_mut_new = self.forest.grooves.accounts_mutable.get(dr_immut.timestamp).?.*;
             var cr_mut_new = self.forest.grooves.accounts_mutable.get(cr_immut.timestamp).?.*;
@@ -1127,48 +1114,11 @@ pub fn StateMachineType(
                 cr_mut_new.credits_posted += amount;
             }
 
-            self.forest.grooves.accounts_mutable.put(&dr_mut_new);
-            self.forest.grooves.accounts_mutable.put(&cr_mut_new);
+            self.forest.grooves.accounts_mutable.upsert(&dr_mut_new);
+            self.forest.grooves.accounts_mutable.upsert(&cr_mut_new);
 
             self.commit_timestamp = t.timestamp;
             return .ok;
-        }
-
-        fn post_or_void_pending_transfer_rollback(self: *StateMachine, t: *const Transfer) void {
-            assert(t.id > 0);
-            assert(t.flags.post_pending_transfer or t.flags.void_pending_transfer);
-
-            assert(t.pending_id > 0);
-            const p = self.get_transfer(t.pending_id).?;
-            assert(p.id == t.pending_id);
-            assert(p.debit_account_id > 0);
-            assert(p.credit_account_id > 0);
-
-            const dr_immut = self.forest.grooves.accounts_immutable.get(p.debit_account_id).?;
-            const cr_immut = self.forest.grooves.accounts_immutable.get(p.credit_account_id).?;
-            assert(dr_immut.id == p.debit_account_id);
-            assert(cr_immut.id == p.credit_account_id);
-
-            var dr_mut = self.forest.grooves.accounts_mutable.get(dr_immut.timestamp).?.*;
-            var cr_mut = self.forest.grooves.accounts_mutable.get(cr_immut.timestamp).?.*;
-            assert(dr_mut.timestamp == dr_immut.timestamp);
-            assert(cr_mut.timestamp == cr_immut.timestamp);
-
-            if (t.flags.post_pending_transfer) {
-                const amount = if (t.amount > 0) t.amount else p.amount;
-                assert(amount > 0);
-                assert(amount <= p.amount);
-                dr_mut.debits_posted -= amount;
-                cr_mut.credits_posted -= amount;
-            }
-            dr_mut.debits_pending += p.amount;
-            cr_mut.credits_pending += p.amount;
-
-            self.forest.grooves.accounts_mutable.put(&dr_mut);
-            self.forest.grooves.accounts_mutable.put(&cr_mut);
-
-            self.forest.grooves.posted.remove(t.pending_id);
-            self.forest.grooves.transfers.remove(t.id);
         }
 
         fn post_or_void_pending_transfer_exists(
@@ -1590,7 +1540,7 @@ fn check(comptime test_table: []const u8) !void {
                 mut.debits_posted = b.debits_posted;
                 mut.credits_pending = b.credits_pending;
                 mut.credits_posted = b.credits_posted;
-                context.state_machine.forest.grooves.accounts_mutable.put(&mut);
+                context.state_machine.forest.grooves.accounts_mutable.upsert(&mut);
             },
 
             .account => |a| {
@@ -1600,7 +1550,7 @@ fn check(comptime test_table: []const u8) !void {
                 const event = a.event();
                 try request.appendSlice(std.mem.asBytes(&event));
                 if (a.result == .ok) {
-                    try accounts.put(a.id, event);
+                    try accounts.upsert(a.id, event);
                 } else {
                     const result = CreateAccountsResult{
                         .index = @intCast(u32, @divExact(request.items.len, @sizeOf(Account)) - 1),
@@ -1616,7 +1566,7 @@ fn check(comptime test_table: []const u8) !void {
                 const event = t.event();
                 try request.appendSlice(std.mem.asBytes(&event));
                 if (t.result == .ok) {
-                    try transfers.put(t.id, event);
+                    try transfers.upsert(t.id, event);
                 } else {
                     const result = CreateTransfersResult{
                         .index = @intCast(u32, @divExact(request.items.len, @sizeOf(Transfer)) - 1),

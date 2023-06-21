@@ -196,8 +196,7 @@ pub fn GrooveType(
                 return a == b;
             }
         }.equal,
-        .{
-        },
+        .{},
         @typeName(Object),
     );
 
@@ -344,6 +343,10 @@ pub fn GrooveType(
         },
     });
 
+    // TODO: For now, just a hack to only exist for the object tree. This should be comptime
+    // generated for all trees.
+    const _Scope = struct { value_context: _ObjectTree.TableMemory.ValueContext = .{} };
+
     // Verify no hash collisions between all the trees:
     comptime var hashes: []const u128 = &.{_ObjectTree.hash};
 
@@ -431,6 +434,7 @@ pub fn GrooveType(
         pub const ObjectsCache = _ObjectsCache;
 
         const Grid = GridType(Storage);
+        const Scope = _Scope;
 
         const Callback = fn (*Groove) void;
         const JoinOp = enum {
@@ -473,6 +477,7 @@ pub fn GrooveType(
         // "A set associative cache of values shared by trees with the same key/value sizes.
         // The value type will be []u8 and this will be shared by trees with the same value size."
         objects_cache: *ObjectsCache,
+        active_scope: ?Scope = null,
 
         pub const Options = struct {
             /// The maximum number of objects that might be prefetched by a batch.
@@ -608,18 +613,18 @@ pub fn GrooveType(
                 return;
             }
 
-                if (groove.objects_cache.get_index(key)) |index| {
-                    _ = index;
-                    // groove.prefetch_objects.putAssumeCapacity(objects_cache.values[index], {});
+            if (groove.objects_cache.get_index(key)) |index| {
+                _ = index;
+                // groove.prefetch_objects.putAssumeCapacity(objects_cache.values[index], {});
                 // } else if (groove.objects.lookup_from_memory(groove.prefetch_snapshot.?, id_tree_value.timestamp)) |object| {
                 //     assert(!ObjectTreeHelpers(Object).tombstone(object));
                 //     assert(object.id == key);
                 //     groove.prefetch_objects.putAssumeCapacity(object.*, {});
-                    // std.log.info("{s}: Tried to look up: {} from cache, index was {}", .{@typeName(Object), key, index});
-                } else {
-                    // std.log.info("{s}: Tried to look up: {} from cache, index was null", .{@typeName(Object), key});
-                    groove.prefetch_ids.putAssumeCapacity(key, {});
-                }
+                // std.log.info("{s}: Tried to look up: {} from cache, index was {}", .{@typeName(Object), key, index});
+            } else {
+                // std.log.info("{s}: Tried to look up: {} from cache, index was null", .{@typeName(Object), key});
+                groove.prefetch_ids.putAssumeCapacity(key, {});
+            }
             // } else {
             //     // No cache, always prefetch (fow now)
             //     groove.prefetch_ids.putAssumeCapacity(key, {});
@@ -854,23 +859,15 @@ pub fn GrooveType(
             }
         };
 
-        pub fn put_no_clobber(groove: *Groove, object: *const Object) void {
-            if (groove.objects_cache.get_index(@field(object, primary_field)) == null) {
-                groove.insert(object);
-                groove.objects_cache.insert(object);
-            }
+        /// Insert the value into the objects tree and associated index trees, asserting that it doesn't
+        /// already exist.
+        pub fn insert(groove: *Groove, object: *const Object) void {
+            assert(groove.objects_cache.get_index(@field(object, primary_field)) == null);
+            groove.upsert(object);
         }
 
-        pub fn put(groove: *Groove, object: *const Object) void {
-            if (groove.objects_cache.get(@field(object, primary_field))) |existing_object| {
-                groove.update(existing_object, object);
-            } else {
-                groove.insert(object);
-            }
-        }
-
-        /// Insert the value into the objects tree and its fields into the index trees.
-        fn insert(groove: *Groove, object: *const Object) void {
+        /// Insert the value (or update it, if it exists)
+        pub fn upsert(groove: *Groove, object: *const Object) void {
             groove.objects.put(object);
             if (has_id) groove.ids.put(&IdTreeValue{ .id = object.id, .timestamp = object.timestamp });
 
@@ -882,42 +879,6 @@ pub fn GrooveType(
                 if (Helper.derive_index(object)) |index| {
                     const index_value = Helper.derive_value(object, index);
                     @field(groove.indexes, field.name).put(&index_value);
-                }
-            }
-        }
-
-        /// Update the object and index trees by diff'ing the old and new values.
-        fn update(groove: *Groove, old: *const Object, new: *const Object) void {
-            assert(@field(old, primary_field) == @field(new, primary_field));
-            assert(old.timestamp == new.timestamp);
-
-            // TODO: Do we need to remove...? Maybe only
-            // if has_id and old.id != new.id
-            groove.objects_cache.insert(new);
-
-            // Update the object tree entry if any of the fields (even ignored) are different.
-            if (!std.mem.eql(u8, std.mem.asBytes(old), std.mem.asBytes(new))) {
-                // Unlike the index trees, the new and old values in the object tree share the
-                // same key. Therefore put() is sufficient to overwrite the old value.
-                groove.objects.put(new);
-            }
-
-            inline for (std.meta.fields(IndexTrees)) |field| {
-                const Helper = IndexTreeFieldHelperType(field.name);
-                const old_index = Helper.derive_index(old);
-                const new_index = Helper.derive_index(new);
-
-                // Only update the indexes that change.
-                if (!std.meta.eql(old_index, new_index)) {
-                    if (old_index) |index| {
-                        const old_index_value = Helper.derive_value(old, index);
-                        @field(groove.indexes, field.name).remove(&old_index_value);
-                    }
-
-                    if (new_index) |index| {
-                        const new_index_value = Helper.derive_value(new, index);
-                        @field(groove.indexes, field.name).put(&new_index_value);
-                    }
                 }
             }
         }
@@ -942,6 +903,68 @@ pub fn GrooveType(
                 }
             }
         }
+
+        /// Start a new scope. Within a scope, changes can be commited
+        /// or rolled back. Only one scope can be active at a time.
+        pub fn scope_start(groove: *Groove) void {
+            assert(groove.active_scope == null);
+            groove.active_scope = .{};
+        }
+
+        pub fn scope_commit(groove: *Groove) void {
+            // We don't need to do anything to commit a scope; we can just drop it
+            assert(groove.active_scope != null);
+            groove.active_scope = null;
+        }
+
+        pub fn scope_rollback(groove: *Groove) void {
+            // To rollback a scope, we do two things, at two different logical levels:
+            // 1. Reset the Tree's table_mutable to the index in the scope. Since table_mutable is a log
+            //    of operations, this effectively undoes them
+            // 2. Revert our objects_cache back to the state when the scope was taken. This is a bit more
+            //    involved. We have eviction handling (objects_cache is a hybrid SetAssociateCache with a
+            //    HashMap to catch evictions). When a scope is definied, our eviction handler will do an
+            //    extra check to see if the value being evicted is because of an update. If so, it'll store
+            //    the _first_ instance in a map. On revert, we apply the values in this map over the current
+            //    object cache.
+            _ = groove;
+        }
+
+        // /// Update the object and index trees by diff'ing the old and new values.
+        // fn update(groove: *Groove, old: *const Object, new: *const Object) void {
+        //     assert(@field(old, primary_field) == @field(new, primary_field));
+        //     assert(old.timestamp == new.timestamp);
+
+        //     // TODO: Do we need to remove...? Maybe only
+        //     // if has_id and old.id != new.id
+        //     groove.objects_cache.insert(new);
+
+        //     // Update the object tree entry if any of the fields (even ignored) are different.
+        //     if (!std.mem.eql(u8, std.mem.asBytes(old), std.mem.asBytes(new))) {
+        //         // Unlike the index trees, the new and old values in the object tree share the
+        //         // same key. Therefore put() is sufficient to overwrite the old value.
+        //         groove.objects.put(new);
+        //     }
+
+        //     inline for (std.meta.fields(IndexTrees)) |field| {
+        //         const Helper = IndexTreeFieldHelperType(field.name);
+        //         const old_index = Helper.derive_index(old);
+        //         const new_index = Helper.derive_index(new);
+
+        //         // Only update the indexes that change.
+        //         if (!std.meta.eql(old_index, new_index)) {
+        //             if (old_index) |index| {
+        //                 const old_index_value = Helper.derive_value(old, index);
+        //                 @field(groove.indexes, field.name).remove(&old_index_value);
+        //             }
+
+        //             if (new_index) |index| {
+        //                 const new_index_value = Helper.derive_value(new, index);
+        //                 @field(groove.indexes, field.name).put(&new_index_value);
+        //             }
+        //         }
+        //     }
+        // }
 
         /// Maximum number of pending sync callbacks (ObjectTree + IdTree + IndexTrees).
         const join_pending_max = 1 + @boolToInt(has_id) + std.meta.fields(IndexTrees).len;

@@ -87,6 +87,7 @@ pub fn KWayMergeIterator(
         }
 
         pub fn pop(it: *Self) ?Value {
+            std.log.info("Popping from context {*} with it {*}", .{it.context, it});
             while (it.pop_internal()) |value| {
                 const key = key_from_value(&value);
                 if (it.previous_key_popped) |previous| {
@@ -216,7 +217,7 @@ fn TestContext(comptime k_max: u32) type {
     return struct {
         const Self = @This();
 
-        const log = false;
+        const log = true;
 
         const Value = struct {
             key: u32,
@@ -427,6 +428,28 @@ test "k_way_merge: unit" {
             .{ .key = 4, .version = 0 },
             .{ .key = 3, .version = 0 },
             .{ .key = 0, .version = 0 },
+        },
+    );
+    try TestContext(3).merge(
+        .ascending,
+        &[_][]const u32{
+            &[_]u32{ 0, 1, 2, 3 },
+            &[_]u32{ 4, 5, 6, 7 },
+            &[_]u32{ 8, 9, 10, 11 },
+        },
+        &[_]TestContext(3).Value{
+            .{ .key = 0, .version = 0 },
+            .{ .key = 1, .version = 0 },
+            .{ .key = 2, .version = 0 },
+            .{ .key = 3, .version = 0 },
+            .{ .key = 4, .version = 1 },
+            .{ .key = 5, .version = 1 },
+            .{ .key = 6, .version = 1 },
+            .{ .key = 7, .version = 1 },
+            .{ .key = 8, .version = 2 },
+            .{ .key = 9, .version = 2 },
+            .{ .key = 10, .version = 2 },
+            .{ .key = 11, .version = 2 },
         },
     );
     try TestContext(3).merge(
