@@ -245,37 +245,6 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type, comptime tree_
             tree.table_mutable.remove(value);
         }
 
-        /// Returns the value from the mutable or immutable table (possibly a tombstone),
-        /// if one is available for the specified snapshot.
-        pub fn lookup_from_memory(tree: *Tree, snapshot: u64, key: Key) ?*const Value {
-            assert(tree.lookup_snapshot_max >= snapshot);
-
-            std.log.info("Lookup_from_memory snapshot max: {} snapshot: {} snapshot_min: {}", .{ tree.lookup_snapshot_max, snapshot, tree.table_immutable.mutability.immutable.snapshot_min });
-
-            if (tree.lookup_snapshot_max == snapshot) {
-                // This should never happen in practice; the object cache that sits above us in the
-                // groove will capture all gets, but we still support it for fuzzing
-                // (and assert we're running in a fuzzer in .get)
-                std.log.info("Looking up in mutable...", .{});
-                if (tree.table_mutable.get(key)) |value| return value;
-            } else {
-                // The mutable table is converted to an immutable table when a snapshot is created.
-                // This means that a past snapshot will never be able to see the mutable table.
-                // This simplifies the mutable table and eliminates compaction for duplicate puts.
-            }
-
-            if (!tree.table_immutable.mutability.immutable.flushed and tree.table_immutable.mutability.immutable.snapshot_min <= snapshot) {
-                std.log.info("Looking up in immutable...", .{});
-                if (tree.table_immutable.get(key)) |value| return value;
-            } else {
-                // If the immutable table is invisible, then the mutable table is also invisible.
-                // assert(tree.table_immutable.free or snapshot != tree.lookup_snapshot_max);
-            }
-
-            return null;
-        }
-
-        /// Call this function only after checking `lookup_from_memory()`.
         pub fn lookup_from_levels(
             tree: *Tree,
             callback: fn (*LookupContext, ?*const Value) void,
@@ -285,10 +254,6 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type, comptime tree_
         ) void {
             std.log.info("Looking up from levels...", .{});
             assert(tree.lookup_snapshot_max >= snapshot);
-            if (constants.verify) {
-                // The caller is responsible for checking the mutable table.
-                assert(tree.lookup_from_memory(snapshot, key) == null);
-            }
 
             var index_block_count: u8 = 0;
             var index_block_addresses: [constants.lsm_levels]u64 = undefined;

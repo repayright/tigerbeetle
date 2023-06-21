@@ -15,17 +15,21 @@ pub fn TableMemoryType(comptime Table: type) type {
     const value_count_max = Table.value_count_max;
     const compare_keys = Table.compare_keys;
     const key_from_value = Table.key_from_value;
-    const tombstone_from_key = Table.tombstone_from_key;
 
     return struct {
         const TableMemory = @This();
         pub const k_sort_interval = @divExact(value_count_max, constants.lsm_batch_multiple);
 
         pub const ValueContext = struct {
+            count: usize = 0,
+
             key_min: ?Key = null,
             key_max: ?Key = null,
+
+            // This currently tracks if the entire array is in fully sorted order. We could repurpose
+            // it, or add another flag, to check if each buffer is in sorted order (ie, suitable for
+            // k-way merge)
             sorted: bool = true,
-            count: usize = 0,
         };
 
         const Mutability = union(enum) {
@@ -96,88 +100,27 @@ pub fn TableMemoryType(comptime Table: type) type {
             return table.value_context.count;
         }
 
-        fn verify_sort(values: []Value) void {
-            // if (constants.verify) {
-            //     var i: usize = 1;
-            //     while (i < sorted_values.len) : (i += 1) {
-            //         assert(i > 0);
-            //         const left_key = key_from_value(&sorted_values[i - 1]);
-            //         const right_key = key_from_value(&sorted_values[i]);
-            //         assert(compare_keys(left_key, right_key) == .lt);
-            //     }
-            // }
-
-            var good = true;
-            for (values) |value, i| {
-                if (i + 1 == values.len) {
-                    break;
-                }
-                const comp = compare_keys(key_from_value(&value), key_from_value(&values[i + 1]));
-                if (comp == .gt or comp == .eq) {
-                    good = false;
-                    std.log.info("WTF: Comp was gt / eq!! index {} and +1: {} vs {}", .{ i, key_from_value(&value), key_from_value(&values[i + 1]) });
-                    // assert(false);
+        fn verify_sort(sorted_values: []Value, equality: enum { allow_equals, lt_only }) void {
+            var i: usize = 1;
+            while (i < sorted_values.len) : (i += 1) {
+                assert(i > 0);
+                const left_key = key_from_value(&sorted_values[i - 1]);
+                const right_key = key_from_value(&sorted_values[i]);
+                if (equality == .allow_equals) {
+                    assert(compare_keys(left_key, right_key) != .gt);
+                } else {
+                    assert(compare_keys(left_key, right_key) == .lt);
                 }
             }
         }
 
-        // fn merge(table: *TableMemory, start_index_1: usize, end_index_1: usize, start_index_2: usize, end_index_2: usize) void {
-        //     var slice_1 = table.values[start_index_1..end_index_1];
-        //     var slice_2 = table.values[start_index_2..end_index_2];
-
-        //     // std.log.info("Merge kicking off with lens {} and {}", .{slice_1.len, slice_2.len});
-
-        //     var i: usize = 0;
-        //     var values_scratch = table.values_scratch;
-        //     while (slice_1.len > 0 and slice_2.len > 0) {
-        //         const a = slice_1[0];
-        //         const b = slice_2[0];
-        //         const result = compare_keys(key_from_value(&a), key_from_value(&b));
-        //         if (result == .lt) {
-        //             values_scratch[i] = a;
-        //             slice_1 = slice_1[1..]; // Pop the first item off
-        //         } else if (result == .eq) {
-        //             // If two keys are equal, the newest (slice_2) one wins, and remove the other one
-        //             values_scratch[i] = b;
-        //             slice_1 = slice_1[1..]; // Pop the first item off
-        //             slice_2 = slice_2[1..]; // Pop the second item off
-        //         } else {
-        //             values_scratch[i] = b;
-        //             slice_2 = slice_2[1..]; // Pop the first item off
-        //         }
-        //         // TODO - check the previous value too...
-        //         i += 1;
-        //     }
-
-        //     // Handle residue... Just need to copy to the end
-        //     // Could optimize and do this straight to values
-        //     if (slice_1.len > 0) {
-        //         // std.log.info("Residue on 1", .{});
-        //         std.mem.copy(Value, values_scratch[i .. i + slice_1.len], slice_1[0..]);
-        //         i += slice_1.len;
-        //     } else if (slice_2.len > 0) {
-        //         // std.log.info("Residue on 2", .{});
-        //         std.mem.copy(Value, values_scratch[i .. i + slice_2.len], slice_2[0..]);
-        //         i += slice_2.len;
-        //     }
-
-        //     if (start_index_1 == 0 and end_index_2 == table.value_context.count) {
-        //         // Whole copy - we can swap ptrs
-        //         std.mem.swap([]Value, &table.values, &table.values_scratch);
-        //     } else {
-        //         // Worth having k real buckets and swapping ptrs vs memcpy for the smaller cases?
-        //         std.mem.copy(Value, table.values[start_index_1..end_index_2], table.values_scratch[0..i]);
-        //     }
-        // }
-
         /// Synchronous compact hook. Used to sort up to k_sort_interval values each compaction beat.
         pub fn compact(table: *TableMemory) void {
-            _ = table;
-            // Todo make this comptime
-            // if (table.ordering == .ordered_puts) {
-            //     std.log.info("We are ordered putting, not compacting", .{});
-            //     return;
-            // }
+            assert(table.mutability == .mutable);
+
+            // TODO, should just sort the last bucket, obvs
+            std.sort.sort(Value, table.values[0..table.value_context.count], {}, sort_values_by_key_in_ascending_order);
+            table.value_context.sorted = true;
         }
 
         pub fn put(table: *TableMemory, value: *const Value) void {
@@ -190,6 +133,7 @@ pub fn TableMemoryType(comptime Table: type) type {
 
             // Hmmm - less branchy way of doing this?
             // Also, need to confirm sorted setting logic
+            // ALSO we actually care about sorted runs...
             const key = key_from_value(value);
             if (table.value_context.key_min) |_key_min| {
                 if (compare_keys(_key_min, key) == .gt) {
@@ -210,133 +154,14 @@ pub fn TableMemoryType(comptime Table: type) type {
             } else {
                 table.value_context.key_max = key;
             }
-
-            // If we're doing a put that's a multiple of key_count_max / lsm_batch_multiple
-            // Sort the range. This will get k-way-merged later by sort_into_values_and_clear
-
-            // TODO: Move all into fn compact
-            // // TODO Faster way of doing this check?
-            // if (table.value_context.count % k_sort_interval == 0) { // and table.value_context.count > 0
-            //     const start_index = table.value_context.count - k_sort_interval;
-            //     const end_index = table.value_context.count;
-
-            //     var chunk = table.values[start_index..end_index];
-            //     std.sort.sort(Value, chunk, {}, sort_values_by_key_in_ascending_order);
-
-            //     std.log.info("value_count is: {} sorting 1st from {} to {}, sort is good: {}", .{ table.value_context.count, start_index, end_index, verify_sort(chunk) });
-            //     // std.log.info("value_ind ex is: {}", .{table.value_context.count});
-            //     // std.log.info("Sorted is: {} {} {}", .{chunk[0], chunk[1], chunk[2]});
-            // }
-
-            // var hack: u32 = 2;
-            // while (hack <= constants.lsm_batch_multiple) {
-            //     const k_sort_interval_multiple = k_sort_interval * hack;
-            //     if (table.value_context.count % (k_sort_interval * hack) == 0) {
-            //         const start_index_1 = table.value_context.count - (k_sort_interval_multiple);
-            //         const end_index_1 = table.value_context.count - @divExact(k_sort_interval_multiple, 2);
-
-            //         const start_index_2 = end_index_1;
-            //         const end_index_2 = table.value_context.count;
-
-            //         table.merge(start_index_1, end_index_1, start_index_2, end_index_2);
-            //         var chunk = table.values[start_index_1..end_index_2];
-            //         std.log.info("value_count is: {} {}ith layer from {} to {}, {} to {}, sort is good: {}", .{ table.value_context.count, hack, start_index_1, end_index_1, start_index_2, end_index_2, verify_sort(chunk) });
-            //     }
-
-            //     hack *= 2;
-            // }
-        }
-
-        pub fn remove(table: *TableMemory, value: *const Value) void {
-            const tombstone = tombstone_from_key(key_from_value(value));
-            table.put(&tombstone);
-
-            // Super unoptimized path for the fuzzer, where we handle the generic case
-
-            // const last_value = table.values[table.value_context.count];
-            // assert(last_value == value.*);
-            // _ = value;
-
-            // table.value_context.count -= 1;
-            // // TODO - untested, and not sure how it'll interact with everything
-            // // else, as well as value_count_max...
-            // // TODO this and put need asserts for being mutable...
-            // const tombstone = tombstone_from_key(key_from_value(value));
-            // // std.log.info("{*}: Removing {} with {}", .{ table, value, tombstone });
-            // table.put(&tombstone);
-        }
-
-        pub fn get(table: *TableMemory, key: Key) ?*const Value {
-            // This code path should normally _never_ be taken; any lookups for table_mutable or table_immutable
-            // will be caught at a Groove level by the object cache. However, it is exercised by the fuzzer,
-            // and that's useful for testing our puts and all the permutations there are working.
-            assert(constants.verify);
-
-            // Since this is a binary search, we need to be sure we're operating on a fully sorted values
-            // array. The only time this .get() will be used is during fuzzing, so just std.sort it. Real
-            // code is expected to make use of the KWayMerge iterator.
-            if (true) {
-                std.sort.sort(Value, table.values[0..table.value_context.count], {}, sort_values_by_key_in_ascending_order);
-                table.value_context.sorted = true;
-
-                // // Same equality fixup hack as in make_immutable
-                // var i: usize = 0;
-                // for (table.values[0..table.value_context.count]) |*value| {
-                //     if (i > 0 and compare_keys(key_from_value(&table.values_scratch[i - 1]), key_from_value(value)) == .eq) {
-                //         i -= 1;
-                //     }
-
-                //     table.values_scratch[i] = value.*;
-                //     i += 1;
-                // }
-
-                // table.value_context.count = i;
-                // std.mem.swap([]Value, &table.values, &table.values_scratch);
-            }
-            // verify_sort(table.values);
-
-            // if (key.id == 327 and table.mutability == .mutable) {
-            //     if (table.values.len > 0) {
-            //         for (table.values[0..table.value_context.count]) |*value| {
-            //             std.log.info("{*} VALUES IN GET: {}", .{ table, value });
-            //         }
-            //     } else {
-            //         std.log.info("{*} VALUES IN GET EMPTY", .{table});
-            //     }
-            // }
-            // if (table.values.len > 0) {
-            //     for (table.values[0..table.value_context.count]) |*value| {
-            //         std.log.info("{*} VALUES IN GET: {}", .{ table, value });
-            //     }
-            // } else {
-            //     std.log.info("{*} VALUES IN GET EMPTY", .{table});
-            // }
-
-            const result = binary_search.binary_search_values(
-                Key,
-                Value,
-                key_from_value,
-                compare_keys,
-                table.values[0..table.value_context.count], // TODO for immutable??
-                key,
-                .{},
-            );
-
-            if (result.exact) {
-                const value = &table.values[result.index];
-                if (constants.verify) assert(compare_keys(key, key_from_value(value)) == .eq);
-                return value;
-            }
-
-            return null;
         }
 
         pub fn iterator(table: *TableMemory) Iterator {
-            assert(table.value_context.sorted);
-
             // For now only; nothing really stops us, but we just need to be careful since the KWayMerge
-            // iterator state will likely be invalid if a put comes in.
+            // iterator state will likely be invalid if a put comes in. We'd also need to ensure we
+            // sort the last buffer.
             assert(table.mutability == .immutable);
+            assert(table.value_context.sorted);
 
             var i: u32 = 0;
             while (i < constants.lsm_batch_multiple) : (i += 1) {
@@ -366,12 +191,17 @@ pub fn TableMemoryType(comptime Table: type) type {
             std.log.info("{*} Making immutable...", .{table});
             table.values = table.values[0..table.value_context.count];
 
-            // TODO!
+            // TODO! We might have to sort the last bucket
             std.sort.sort(Value, table.values[0..table.value_context.count], {}, sort_values_by_key_in_ascending_order);
             table.value_context.sorted = true;
 
-            // Gate this behind config.verify
-            verify_sort(table.values);
+            if (constants.verify) {
+                // At this stage, we might have duplicate values in our values stream. This is _ok_
+                // it's only when iterating the final output that we need to ensure the latest
+                // update 'wins'
+                verify_sort(table.values, .allow_equals);
+            }
+
             // If we have no values, then we can consider ourselves flushed right away.
             table.mutability = .{ .immutable = .{ .flushed = table.value_context.count == 0, .snapshot_min = snapshot_min } };
             std.log.info("{*} Done Making immutable...", .{table});
@@ -381,12 +211,15 @@ pub fn TableMemoryType(comptime Table: type) type {
             assert(table.mutability == .immutable);
             assert(table.mutability.immutable.flushed == true);
 
-            table.values = table.values.ptr[0..value_count_max];
-            assert(table.values.len == value_count_max);
+            var values_max = table.values.ptr[0..value_count_max];
+            assert(values_max.len == value_count_max);
 
             std.log.info("{*}: Making mutable...", .{table});
-            table.value_context.count = 0;
-            table.mutability = .mutable;
+            table.* = .{
+                .values = values_max,
+                .value_context = .{},
+                .mutability = .mutable,
+            };
             std.log.info("{*}: Done making mutable...", .{table});
         }
 
@@ -409,4 +242,72 @@ pub fn TableMemoryType(comptime Table: type) type {
             allocator.free(table.values);
         }
     };
+}
+
+const TestTable = struct {
+    const Key = u32;
+    const Value = struct { key: Key, value: u32, tombstone: bool };
+    const value_count_max = 8;
+
+    inline fn key_from_value(v: *const Value) u32 {
+        return v.key;
+    }
+
+    inline fn compare_keys(a: Key, b: Key) math.Order {
+        return math.order(a, b);
+    }
+
+    inline fn tombstone_from_key(a: Key) Value {
+        return Value{ .key = a, .value = 0, .tombstone = true };
+    }
+};
+
+test "table_memory: unit" {
+    const testing = std.testing;
+    const TableMemory = TableMemoryType(TestTable);
+
+    const allocator = testing.allocator;
+    var table_memory = try TableMemory.init(allocator, .mutable);
+    defer table_memory.deinit(allocator);
+
+    table_memory.put(&.{ .key = 1, .value = 1, .tombstone = false });
+    table_memory.put(&.{ .key = 3, .value = 3, .tombstone = false });
+    table_memory.put(&.{ .key = 5, .value = 5, .tombstone = false });
+
+    assert(table_memory.count() == 3 and table_memory.value_context.count == 3);
+    assert(table_memory.value_context.key_min.? == 1);
+    assert(table_memory.value_context.key_max.? == 5);
+    assert(table_memory.value_context.sorted);
+
+    table_memory.put(&.{ .key = 0, .value = 0, .tombstone = false });
+
+    assert(table_memory.count() == 4 and table_memory.value_context.count == 4);
+    assert(table_memory.value_context.key_min.? == 0);
+    assert(table_memory.value_context.key_max.? == 5);
+    assert(!table_memory.value_context.sorted);
+
+    // Our iterator will return the latest .put, even though internally we store them all.
+    table_memory.put(&.{ .key = 1, .value = 11, .tombstone = false });
+    table_memory.put(&.{ .key = 3, .value = 33, .tombstone = false });
+    table_memory.put(&.{ .key = 3, .value = 333, .tombstone = false });
+    table_memory.put(&.{ .key = 3, .value = 3333, .tombstone = false });
+
+    table_memory.compact();
+    table_memory.make_immutable(0);
+    var iterator = table_memory.iterator();
+
+    assert(std.meta.eql(iterator.pop(), .{ .key = 0, .value = 0, .tombstone = false }));
+    assert(std.meta.eql(iterator.pop(), .{ .key = 1, .value = 11, .tombstone = false }));
+    assert(std.meta.eql(iterator.pop(), .{ .key = 3, .value = 3333, .tombstone = false }));
+    assert(std.meta.eql(iterator.pop(), .{ .key = 5, .value = 5, .tombstone = false }));
+
+    // "Flush" and make mutable again
+    table_memory.mutability.immutable.flushed = true;
+
+    table_memory.make_mutable();
+    assert(table_memory.count() == 0 and table_memory.value_context.count == 0);
+    assert(table_memory.value_context.key_min == null);
+    assert(table_memory.value_context.key_max == null);
+    assert(table_memory.value_context.sorted);
+    assert(table_memory.mutability == .mutable);
 }

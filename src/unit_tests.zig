@@ -17,6 +17,7 @@ test {
     _ = @import("lsm/manifest_level.zig");
     _ = @import("lsm/segmented_array.zig");
     _ = @import("lsm/k_way_merge.zig");
+    _ = @import("lsm/table_memory.zig");
 
     _ = @import("state_machine.zig");
     _ = @import("state_machine/auditor.zig");

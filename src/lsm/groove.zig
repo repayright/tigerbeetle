@@ -763,31 +763,14 @@ pub fn GrooveType(
                     return;
                 }
 
-                if (worker.context.groove.ids.lookup_from_memory(
+                // If not in the LSM tree's cache, the object must be read from disk and added
+                // to the auxiliary prefetch_objects hash map.
+                worker.context.groove.ids.lookup_from_levels(
+                    lookup_id_callback,
+                    &worker.lookup.id,
                     worker.context.snapshot,
                     id.*,
-                )) |id_tree_value| {
-                    assert(!id_tree_value.tombstone());
-                    lookup_id_callback(&worker.lookup.id, id_tree_value);
-
-                    if (constants.verify) {
-                        // If the id is cached, then we must be prefetching it because the object
-                        // was not also cached.
-                        assert(worker.context.groove.objects.lookup_from_memory(
-                            worker.context.snapshot,
-                            id_tree_value.timestamp,
-                        ) == null);
-                    }
-                } else {
-                    // If not in the LSM tree's cache, the object must be read from disk and added
-                    // to the auxiliary prefetch_objects hash map.
-                    worker.context.groove.ids.lookup_from_levels(
-                        lookup_id_callback,
-                        &worker.lookup.id,
-                        worker.context.snapshot,
-                        id.*,
-                    );
-                }
+                );
             }
 
             fn lookup_id_callback(
@@ -795,24 +778,9 @@ pub fn GrooveType(
                 result: ?*const IdTreeValue,
             ) void {
                 const worker = LookupContext.parent(completion);
-                const key_verify = if (constants.verify) worker.lookup.id.key else {};
                 worker.lookup = undefined;
 
                 if (result) |id_tree_value| {
-                    if (constants.verify) {
-                        // This was checked in prefetch_enqueue().
-                        assert(
-                            worker.context.groove.ids.lookup_from_memory(
-                                worker.context.snapshot,
-                                key_verify,
-                            ) == null or
-                                worker.context.groove.objects.lookup_from_memory(
-                                worker.context.snapshot,
-                                id_tree_value.timestamp,
-                            ) == null,
-                        );
-                    }
-
                     if (!id_tree_value.tombstone()) {
                         worker.lookup_with_timestamp(id_tree_value.timestamp);
                         return;
@@ -823,18 +791,6 @@ pub fn GrooveType(
             }
 
             fn lookup_with_timestamp(worker: *PrefetchWorker, timestamp: u64) void {
-                if (worker.context.groove.objects.lookup_from_memory(
-                    worker.context.snapshot,
-                    timestamp,
-                )) |object| {
-                    // The object is not a tombstone; the ID (if any) and Object trees are in sync.
-                    assert(!ObjectTreeHelpers(Object).tombstone(object));
-
-                    worker.context.groove.objects_cache.insert(object);
-                    worker.lookup_start_next();
-                    return;
-                }
-
                 worker.context.groove.objects.lookup_from_levels(
                     lookup_object_callback,
                     &worker.lookup.object,
