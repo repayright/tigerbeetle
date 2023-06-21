@@ -12,7 +12,7 @@ const TreeType = @import("tree.zig").TreeType;
 const GridType = @import("grid.zig").GridType;
 const CompositeKey = @import("composite_key.zig").CompositeKey;
 const NodePool = @import("node_pool.zig").NodePool(constants.lsm_manifest_node_size, 16);
-const SetAssociativeCache = @import("set_associative_cache.zig").SetAssociativeCache;
+const CacheMap = @import("cache_map.zig").CacheMap;
 
 const snapshot_latest = @import("tree.zig").snapshot_latest;
 const compaction_snapshot_for_op = @import("tree.zig").compaction_snapshot_for_op;
@@ -173,32 +173,6 @@ pub fn GrooveType(
 
     const primary_field = if (has_id) "id" else "timestamp";
     const PrimaryKey = @TypeOf(@field(@as(Object, undefined), primary_field));
-
-    const _ObjectsCache = SetAssociativeCache(
-        PrimaryKey,
-        Object,
-        struct {
-            inline fn key_from_value(value: *const Object) PrimaryKey {
-                if (has_id) {
-                    return value.id;
-                } else {
-                    return value.timestamp;
-                }
-            }
-        }.key_from_value,
-        struct {
-            inline fn hash(key: PrimaryKey) u64 {
-                return stdx.hash_inline(key);
-            }
-        }.hash,
-        struct {
-            inline fn equal(a: PrimaryKey, b: PrimaryKey) bool {
-                return a == b;
-            }
-        }.equal,
-        .{},
-        @typeName(Object),
-    );
 
     // Generate index LSM trees from the struct fields.
     for (std.meta.fields(Object)) |field| {
@@ -425,6 +399,32 @@ pub fn GrooveType(
         }
     }.HelperType;
 
+    const _ObjectsCache = CacheMap(
+        PrimaryKey,
+        Object,
+        struct {
+            inline fn key_from_value(value: *const Object) PrimaryKey {
+                if (has_id) {
+                    return value.id;
+                } else {
+                    return value.timestamp;
+                }
+            }
+        }.key_from_value,
+        struct {
+            inline fn hash(key: PrimaryKey) u64 {
+                return stdx.hash_inline(key);
+            }
+        }.hash,
+        struct {
+            inline fn equal(a: PrimaryKey, b: PrimaryKey) bool {
+                return a == b;
+            }
+        }.equal,
+        _ObjectTree.Table.HashMapContextValue,
+        @typeName(Object),
+    );
+
     return struct {
         const Groove = @This();
 
@@ -503,6 +503,7 @@ pub fn GrooveType(
             objects_cache.* = try ObjectsCache.init(
                 allocator,
                 options.cache_entries_max,
+                options.cache_entries_max, // Sizing for this tho :/
             );
             errdefer objects_cache.deinit(allocator);
 
@@ -613,48 +614,9 @@ pub fn GrooveType(
                 return;
             }
 
-            if (groove.objects_cache.get_index(key)) |index| {
-                _ = index;
-                // groove.prefetch_objects.putAssumeCapacity(objects_cache.values[index], {});
-                // } else if (groove.objects.lookup_from_memory(groove.prefetch_snapshot.?, id_tree_value.timestamp)) |object| {
-                //     assert(!ObjectTreeHelpers(Object).tombstone(object));
-                //     assert(object.id == key);
-                //     groove.prefetch_objects.putAssumeCapacity(object.*, {});
-                // std.log.info("{s}: Tried to look up: {} from cache, index was {}", .{@typeName(Object), key, index});
-            } else {
-                // std.log.info("{s}: Tried to look up: {} from cache, index was null", .{@typeName(Object), key});
+            if (groove.objects_cache.get_index(key) == null) {
                 groove.prefetch_ids.putAssumeCapacity(key, {});
             }
-            // } else {
-            //     // No cache, always prefetch (fow now)
-            //     groove.prefetch_ids.putAssumeCapacity(key, {});
-            // }
-
-            // if (!has_id) {
-            //     groove.prefetch_ids.putAssumeCapacity(key, {});
-            //     return;
-            // }
-
-            // if (groove.ids.lookup_from_memory(groove.prefetch_snapshot.?, key)) |id_tree_value| {
-            //     if (id_tree_value.tombstone()) {
-            //         // Do nothing; an explicit ID tombstone indicates that the object was deleted.
-            //     } else {
-            //         if (groove.objects.lookup_from_memory(
-            //             groove.prefetch_snapshot.?,
-            //             id_tree_value.timestamp,
-            //         )) |object| {
-            //             assert(!ObjectTreeHelpers(Object).tombstone(object));
-            //             assert(object.id == key);
-            //             groove.prefetch_objects.putAssumeCapacity(object.*, {});
-            //         } else {
-            //             // The id was in the IdTree's value cache, but not in the ObjectTree's
-            //             // value cache.
-            //             groove.prefetch_ids.putAssumeCapacity(key, {});
-            //         }
-            //     }
-            // } else {
-            //     groove.prefetch_ids.putAssumeCapacity(key, {});
-            // }
         }
 
         /// Ensure the objects corresponding to all ids enqueued with prefetch_enqueue() are

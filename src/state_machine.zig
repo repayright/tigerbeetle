@@ -211,10 +211,11 @@ pub fn StateMachineType(
             },
         );
 
-        const PostedGroove = @import("lsm/posted_groove.zig").PostedGrooveType(
-            Storage,
-            config.lsm_batch_multiple * constants.batch_max.create_transfers,
-        );
+        // TODO Disabled for now pending groove unification
+        // const PostedGroove = @import("lsm/posted_groove.zig").PostedGrooveType(
+        //     Storage,
+        //     config.lsm_batch_multiple * constants.batch_max.create_transfers,
+        // );
 
         pub const Workload = WorkloadType(StateMachine);
 
@@ -222,7 +223,7 @@ pub fn StateMachineType(
             .accounts_immutable = AccountsImmutableGroove,
             .accounts_mutable = AccountsMutableGroove,
             .transfers = TransfersGroove,
-            .posted = PostedGroove,
+            // .posted = PostedGroove,
         });
 
         pub const Operation = enum(u8) {
@@ -251,7 +252,7 @@ pub fn StateMachineType(
             accounts_immutable: AccountsImmutableGroove.PrefetchContext,
             accounts_mutable: AccountsMutableGroove.PrefetchContext,
             transfers: TransfersGroove.PrefetchContext,
-            posted: PostedGroove.PrefetchContext,
+            // posted: PostedGroove.PrefetchContext,
 
             // TODO(Zig): No need for this function once Zig is upgraded
             // and @fieldParentPtr() can be used for unions.
@@ -260,8 +261,8 @@ pub fn StateMachineType(
                 const T = @TypeOf(completion);
                 comptime assert(T == *AccountsImmutableGroove.PrefetchContext or
                     T == *AccountsMutableGroove.PrefetchContext or
-                    T == *TransfersGroove.PrefetchContext or
-                    T == *PostedGroove.PrefetchContext);
+                    T == *TransfersGroove.PrefetchContext); // or
+                //T == *PostedGroove.PrefetchContext);
 
                 return @fieldParentPtr(
                     StateMachine,
@@ -389,7 +390,7 @@ pub fn StateMachineType(
             self.forest.grooves.accounts_immutable.prefetch_setup(null);
             self.forest.grooves.accounts_mutable.prefetch_setup(null);
             self.forest.grooves.transfers.prefetch_setup(null);
-            self.forest.grooves.posted.prefetch_setup(null);
+            // self.forest.grooves.posted.prefetch_setup(null);
 
             return switch (operation) {
                 .reserved, .root, .register => unreachable,
@@ -463,7 +464,8 @@ pub fn StateMachineType(
                     self.forest.grooves.transfers.prefetch_enqueue(t.pending_id, .positive_lookup);
                     // This prefetch isn't run yet, but enqueue it here as well to save an extra
                     // iteration over transfers.
-                    self.forest.grooves.posted.prefetch_enqueue(t.pending_id);
+                    // TODO
+                    // self.forest.grooves.posted.prefetch_enqueue(t.pending_id);
                 }
             }
 
@@ -527,18 +529,21 @@ pub fn StateMachineType(
 
         fn prefetch_create_transfers_callback_accounts_mutable(completion: *AccountsMutableGroove.PrefetchContext) void {
             const self = PrefetchContext.parent(completion);
-
-            self.forest.grooves.posted.prefetch(
-                prefetch_create_transfers_callback_posted,
-                &self.prefetch_context.posted,
-            );
-        }
-
-        fn prefetch_create_transfers_callback_posted(completion: *PostedGroove.PrefetchContext) void {
-            const self = PrefetchContext.parent(completion);
-
             self.prefetch_finish();
+
+            // TODO: Pending groove unification
+            // self.forest.grooves.posted.prefetch(
+            //     prefetch_create_transfers_callback_posted,
+            //     &self.prefetch_context.posted,
+            // );
         }
+
+        // TODO: Pending groove unification
+        // fn prefetch_create_transfers_callback_posted(completion: *PostedGroove.PrefetchContext) void {
+        //     const self = PrefetchContext.parent(completion);
+
+        //     self.prefetch_finish();
+        // }
 
         fn prefetch_lookup_accounts(self: *StateMachine, ids: []const u128) void {
             // Function call overhead? Prefetch multiple in one go?
@@ -1180,7 +1185,11 @@ pub fn StateMachineType(
 
         /// Returns whether a pending transfer, if it exists, has already been posted or voided.
         fn get_posted(self: *const StateMachine, pending_id: u128) ?bool {
-            return self.forest.grooves.posted.get(pending_id);
+            _ = self;
+            // TODO
+            _ = pending_id;
+            return null;
+            // return self.forest.grooves.posted.get(pending_id);
         }
 
         pub fn forest_options(options: Options) Forest.GroovesOptions {
@@ -1248,10 +1257,11 @@ pub fn StateMachineType(
                         .amount = .{},
                     },
                 },
-                .posted = .{
-                    .cache_entries_max = options.cache_entries_posted,
-                    .prefetch_entries_max = batch_transfers_max,
-                },
+                // TODO
+                // .posted = .{
+                //     .cache_entries_max = options.cache_entries_posted,
+                //     .prefetch_entries_max = batch_transfers_max,
+                // },
             };
         }
     };
