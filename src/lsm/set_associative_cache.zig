@@ -221,12 +221,15 @@ pub fn SetAssociativeCache(
         }
 
         /// Remove a key from the set associative cache if present.
-        pub fn remove(self: *Self, key: Key) void {
+        pub fn remove(self: *Self, key: Key) ?Value {
             const set = self.associate(key);
-            const way = self.search(set, key) orelse return;
+            const way = self.search(set, key) orelse return null;
 
+            var removed: Value = set.values[way];
             self.counts.set(set.offset + way, 0);
             set.values[way] = undefined;
+
+            return removed;
         }
 
         /// Hint that the key is less likely to be accessed in the future, without actually removing
@@ -266,19 +269,23 @@ pub fn SetAssociativeCache(
 
         /// Insert a value, evicting an older entry if needed.
         pub fn insert(self: *Self, value: *const Value) void {
-            _ = self.insert_index(value);
+            _ = self.insert_index(value, false);
         }
 
         /// Insert a value, evicting an older entry if needed.
         /// Return the index at which the value was inserted.
-        pub fn insert_index(self: *Self, value: *const Value) usize {
+        pub fn insert_index(self: *Self, value: *const Value, return_evicted: bool) struct { index: usize, evicted: ?Value, was_in_cache: bool } {
             const key = key_from_value(value);
             const set = self.associate(key);
             if (self.search(set, key)) |way| {
                 // Overwrite the old entry for this key.
+                var evicted: ?Value = null;
+                if (return_evicted) {
+                    evicted = set.values[way];
+                }
                 self.counts.set(set.offset + way, 1);
                 set.values[way] = value.*;
-                return set.offset + way;
+                return .{ .index = set.offset + way, .evicted = evicted, .was_in_cache = true };
             }
 
             const clock_index = @divExact(set.offset, layout.ways);
@@ -313,7 +320,7 @@ pub fn SetAssociativeCache(
             self.counts.set(set.offset + way, 1);
             self.clocks.set(clock_index, way +% 1);
 
-            return set.offset + way;
+            return .{ .index = set.offset + way, .evicted = null, .was_in_cache = false };
         }
 
         const Set = struct {
@@ -461,7 +468,7 @@ fn set_associative_cache_test(
                 assert(sac.get(key).?.* == key);
                 try expect(sac.counts.get(5) == 2);
 
-                sac.remove(key);
+                _ = sac.remove(key);
                 try expectEqual(@as(?*Value, null), sac.get(key));
                 try expect(sac.counts.get(5) == 0);
             }

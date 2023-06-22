@@ -131,7 +131,7 @@ pub fn StateMachineType(
 
             // TODO(Snapshots) Pass in the target snapshot.
             state_machine.forest.grooves.things.prefetch_setup(null);
-            state_machine.forest.grooves.things.prefetch_enqueue(123);
+            state_machine.forest.grooves.things.prefetch_enqueue(123, .negative_lookup);
             state_machine.forest.grooves.things.prefetch(prefetch_callback, &state_machine.prefetch_context);
         }
 
@@ -162,7 +162,7 @@ pub fn StateMachineType(
                     const thing = state_machine.forest.grooves.things.get(123);
                     const key: u64 = if (thing) |t| t.timestamp else timestamp;
 
-                    state_machine.forest.grooves.things.put(&.{
+                    state_machine.forest.grooves.things.upsert(&.{
                         .timestamp = key,
                         .id = 123,
                         .value = @truncate(u64, vsr.checksum(input)),

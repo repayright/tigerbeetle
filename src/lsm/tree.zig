@@ -244,6 +244,7 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type, comptime tree_
         /// or rolled back. Only one scope can be active at a time.
         pub fn scope_start(tree: *Tree) void {
             assert(tree.active_scope == null);
+
             // TODO: Make this copy more explicit
             tree.active_scope = tree.table_mutable.value_context;
         }
@@ -251,24 +252,15 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type, comptime tree_
         pub fn scope_commit(tree: *Tree) void {
             // We don't need to do anything to commit a scope; we can just drop it
             assert(tree.active_scope != null);
+
             tree.active_scope = null;
         }
 
         pub fn scope_rollback(tree: *Tree) void {
-            // TODO: Note how we do the first one here, and the second one in Groove...
-            // To rollback a scope, we do two things, at two different logical levels:
-            // 1. Reset the Tree's table_mutable to the index in the scope. Since table_mutable is a log
-            //    of operations, this effectively undoes them
-            // 2. Revert our objects_cache back to the state when the scope was taken. This is a bit more
-            //    involved. We have eviction handling (objects_cache is a hybrid SetAssociateCache with a
-            //    HashMap to catch evictions). When a scope is definied, our eviction handler will do an
-            //    extra check to see if the value being evicted is because of an update. If so, it'll store
-            //    the _first_ instance in a map. On revert, we apply the values in this map over the current
-            //    object cache.
-            _ = tree;
+            assert(tree.active_scope != null);
 
             // TODO: Make this copy more explicit
-            tree.table_mutable.value_context = tree.active_scope;
+            tree.table_mutable.value_context = tree.active_scope.?;
             tree.active_scope = null;
         }
 
@@ -277,7 +269,10 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type, comptime tree_
         }
 
         pub fn remove(tree: *Tree, value: *const Value) void {
-            tree.table_mutable.remove(value);
+            assert(false);
+            _ = tree;
+            _ = value;
+            // tree.table_mutable.put(Table.tombstone_from_key(Table.key_from_value(value.*)));
         }
 
         pub fn lookup_from_levels(

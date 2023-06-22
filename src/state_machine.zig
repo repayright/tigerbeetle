@@ -1560,7 +1560,7 @@ fn check(comptime test_table: []const u8) !void {
                 const event = a.event();
                 try request.appendSlice(std.mem.asBytes(&event));
                 if (a.result == .ok) {
-                    try accounts.upsert(a.id, event);
+                    try accounts.put(a.id, event);
                 } else {
                     const result = CreateAccountsResult{
                         .index = @intCast(u32, @divExact(request.items.len, @sizeOf(Account)) - 1),
@@ -1576,7 +1576,7 @@ fn check(comptime test_table: []const u8) !void {
                 const event = t.event();
                 try request.appendSlice(std.mem.asBytes(&event));
                 if (t.result == .ok) {
-                    try transfers.upsert(t.id, event);
+                    try transfers.put(t.id, event);
                 } else {
                     const result = CreateTransfersResult{
                         .index = @intCast(u32, @divExact(request.items.len, @sizeOf(Transfer)) - 1),

@@ -395,6 +395,7 @@ pub fn GrooveType(
         }
     }.HelperType;
 
+    const tombstone_bit = 1 << (64 - 1);
     const _ObjectsCache = CacheMap(
         PrimaryKey,
         Object,
@@ -418,6 +419,27 @@ pub fn GrooveType(
             }
         }.equal,
         _ObjectTree.Table.HashMapContextValue,
+        struct {
+            // NEed to make this more efficient!
+            inline fn tombstone_from_key(a: PrimaryKey) Object {
+                var obj: Object = undefined;
+                if (has_id) {
+                    obj.id = a;
+                    obj.timestamp = 0;
+                } else {
+                    obj.timestamp = a;
+                }
+                obj.timestamp |= tombstone_bit;
+                return obj;
+            }
+        }.tombstone_from_key,
+        struct {
+            // NEed to make this more efficient!
+            inline fn tombstone(a: *const Object) bool {
+                return (a.timestamp & tombstone_bit) != 0;
+            }
+        }.tombstone,
+
         @typeName(Object),
     );
 
@@ -457,20 +479,17 @@ pub fn GrooveType(
         /// The snapshot to prefetch from.
         prefetch_snapshot: ?u64,
 
-        /// OLD COMMENT:
         /// This is used to accelerate point lookups and is not used for range queries.
-        /// Secondary index trees used only for range queries can therefore set this to null.
+        /// It's also where prefetched data is loaded into, so we don't have a different
+        /// prefetch cache to our object cache.
         ///
         /// The values cache is only used for the latest snapshot for simplicity.
         /// Earlier snapshots will still be able to utilize the block cache.
         ///
-        /// The values cache is updated (in bulk) when the mutable table is sorted and frozen,
-        /// rather than updating on every `put()`/`remove()`.
-        /// This amortizes cache inserts for hot keys in the mutable table, and avoids redundantly
-        /// storing duplicate values in both the mutable table and values cache.
-        // TODO Share cache between trees of different grooves:
-        // "A set associative cache of values shared by trees with the same key/value sizes.
-        // The value type will be []u8 and this will be shared by trees with the same value size."
+        /// The values cache is updated on every `insert()`/`upsert()`/`remove()` and stores
+        /// a duplicate of data that's already in table_mutable. This is done because
+        /// keeping table_mutable as an array, and simplifying the compaction path
+        /// is faster than trying to amortize and save memory.
         objects_cache: *ObjectsCache,
 
         pub const Options = struct {
@@ -608,7 +627,7 @@ pub fn GrooveType(
                 return;
             }
 
-            if (groove.objects_cache.get_index(key) == null) {
+            if (!groove.objects_cache.has(key)) {
                 groove.prefetch_ids.putAssumeCapacity(key, {});
             }
         }
@@ -774,7 +793,7 @@ pub fn GrooveType(
         /// Insert the value into the objects tree and associated index trees, asserting that it doesn't
         /// already exist.
         pub fn insert(groove: *Groove, object: *const Object) void {
-            assert(groove.objects_cache.get_index(@field(object, primary_field)) == null);
+            assert(!groove.objects_cache.has(@field(object, primary_field)));
             groove.upsert(object);
         }
 
@@ -796,7 +815,10 @@ pub fn GrooveType(
         }
 
         /// Asserts that the object with the given PrimaryKey exists.
+        /// Nothing actually calls this at the moment
         pub fn remove(groove: *Groove, key: PrimaryKey) void {
+            assert(false);
+
             const object = groove.objects_cache.get(key).?;
 
             groove.objects.remove(object);
@@ -817,28 +839,30 @@ pub fn GrooveType(
         }
 
         pub fn scope_start(groove: *Groove) void {
-            assert(groove.active_scope == null);
-            // groove.active_scope = .{};
-            // TODO: Groove level scope work
-
+            groove.objects_cache.scope_start();
             inline for (std.meta.fields(IndexTrees)) |field| {
                 @field(groove.indexes, field.name).scope_start();
             }
         }
 
         pub fn scope_commit(groove: *Groove) void {
-            assert(groove.active_scope != null);
-            // groove.active_scope = null;
-            // TODO: Groove level scope work
-
+            groove.objects_cache.scope_commit();
             inline for (std.meta.fields(IndexTrees)) |field| {
                 @field(groove.indexes, field.name).scope_commit();
             }
         }
 
+        // To rollback a scope, we do two things, at two different logical levels:
+        // 1. Reset each Tree's table_mutable to the index in the scope. Since table_mutable is a log
+        //    of operations, this effectively undoes them
+        // 2. Revert our objects_cache back to the state when the scope was taken. This is a bit more
+        //    involved. We have eviction handling (objects_cache is a hybrid SetAssociateCache with a
+        //    HashMap to catch evictions). When a scope is definied, our eviction handler will do an
+        //    extra check to see if the value being evicted is because of an update. If so, it'll store
+        //    the _first_ instance in a map. On revert, we apply the values in this map over the current
+        //    object cache.
         pub fn scope_rollback(groove: *Groove) void {
-            // TODO: Groove level scope work
-
+            groove.objects_cache.scope_rollback();
             inline for (std.meta.fields(IndexTrees)) |field| {
                 @field(groove.indexes, field.name).scope_rollback();
             }
@@ -1034,7 +1058,7 @@ test "Groove" {
     _ = Groove.deinit;
 
     _ = Groove.get;
-    _ = Groove.put;
+    _ = Groove.upsert;
     _ = Groove.remove;
 
     _ = Groove.compact;

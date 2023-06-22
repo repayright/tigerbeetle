@@ -444,7 +444,7 @@ pub fn GridType(comptime Storage: type) type {
             assert(!grid.read_resolving);
 
             // Insert the write block into the cache, and give the evicted block to the writer.
-            const cache_index = grid.cache.insert_index(&completed_write.address);
+            const cache_index = grid.cache.insert_index(&completed_write.address, false).index;
             const cache_block = &grid.cache_blocks[cache_index];
             std.mem.swap(BlockPtr, cache_block, completed_write.block);
             std.mem.set(u8, completed_write.block.*, 0);
@@ -604,7 +604,7 @@ pub fn GridType(comptime Storage: type) type {
             const iop_block = &grid.read_iop_blocks[grid.read_iops.index(iop)];
 
             // Insert the block into the cache, and give the evicted block to `iop`.
-            const cache_index = grid.cache.insert_index(&read.address);
+            const cache_index = grid.cache.insert_index(&read.address, false).index;
             const cache_block = &grid.cache_blocks[cache_index];
             std.mem.swap(BlockPtr, iop_block, cache_block);
             std.mem.set(u8, iop_block.*, 0);
@@ -637,7 +637,7 @@ pub fn GridType(comptime Storage: type) type {
             }
 
             // Don't cache a corrupt or incorrect block.
-            grid.cache.remove(read.address);
+            _ = grid.cache.remove(read.address);
 
             // On the result of an invalid block, move the "root" read (and all others it resolves)
             // to recovery queue. Future reads on the same address will see the "root" read in the
