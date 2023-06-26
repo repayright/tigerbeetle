@@ -490,11 +490,12 @@ pub fn GrooveType(
         /// a duplicate of data that's already in table_mutable. This is done because
         /// keeping table_mutable as an array, and simplifying the compaction path
         /// is faster than trying to amortize and save memory.
+        ///
+        /// Invariant: if something is in our object tree, it _must_ exist in our object cache.
         objects_cache: *ObjectsCache,
 
         pub const Options = struct {
             /// The maximum number of objects that might be prefetched by a batch.
-            // TODO: prefetch_entries_max should be absorbed into cache_entries_max somehow
             prefetch_entries_max: u32,
             cache_entries_max: u32,
 
@@ -516,7 +517,9 @@ pub fn GrooveType(
             objects_cache.* = try ObjectsCache.init(
                 allocator,
                 options.cache_entries_max,
-                options.cache_entries_max, // Sizing for this tho :/
+
+                // TODO: Sizing here
+                options.prefetch_entries_max * 2,
             );
             errdefer objects_cache.deinit(allocator);
 
@@ -997,6 +1000,10 @@ pub fn GrooveType(
                 const compact_callback = Join.tree_callback(.{ .index = field.name });
                 @field(groove.indexes, field.name).compact(compact_callback, op);
             }
+
+            // TODO: GC the objects_cache if we're at the end of a bar
+            groove.objects_cache.op = op;
+            groove.objects_cache.compact(op - 2);
         }
 
         pub fn compact_end(groove: *Groove) void {

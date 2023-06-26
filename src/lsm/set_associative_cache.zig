@@ -274,18 +274,15 @@ pub fn SetAssociativeCache(
 
         /// Insert a value, evicting an older entry if needed.
         /// Return the index at which the value was inserted.
-        pub fn insert_index(self: *Self, value: *const Value, return_evicted: bool) struct { index: usize, evicted: ?Value, was_in_cache: bool } {
+        pub fn insert_index(self: *Self, value: *const Value, on_eviction: fn (*Self, *const Value, bool) void) usize {
             const key = key_from_value(value);
             const set = self.associate(key);
             if (self.search(set, key)) |way| {
                 // Overwrite the old entry for this key.
-                var evicted: ?Value = null;
-                if (return_evicted) {
-                    evicted = set.values[way];
-                }
                 self.counts.set(set.offset + way, 1);
+                on_eviction(self, &set.values[way], true);
                 set.values[way] = value.*;
-                return .{ .index = set.offset + way, .evicted = evicted, .was_in_cache = true };
+                return set.offset + way;
             }
 
             const clock_index = @divExact(set.offset, layout.ways);
@@ -309,7 +306,11 @@ pub fn SetAssociativeCache(
 
                 count -= 1;
                 self.counts.set(set.offset + way, count);
-                if (count == 0) break; // Way has become free.
+                if (count == 0) {
+                    // Way has become free.
+                    on_eviction(self, &set.values[way], false);
+                    break;
+                }
             } else {
                 unreachable;
             }
@@ -320,7 +321,7 @@ pub fn SetAssociativeCache(
             self.counts.set(set.offset + way, 1);
             self.clocks.set(clock_index, way +% 1);
 
-            return .{ .index = set.offset + way, .evicted = null, .was_in_cache = false };
+            return set.offset;
         }
 
         const Set = struct {

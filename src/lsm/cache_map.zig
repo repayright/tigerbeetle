@@ -22,7 +22,6 @@ pub fn CacheMap(
     comptime tombstone: fn (*const Value) callconv(.Inline) bool,
     comptime name: [:0]const u8,
 ) type {
-    _ = tombstone;
     const Cache = SetAssociativeCache(
         Key,
         Value,
@@ -42,24 +41,32 @@ pub fn CacheMap(
         load_factor,
     );
 
+    const OpKey = struct {
+        op: u64,
+        key: Key,
+    };
+
     return struct {
         const Self = @This();
 
         pub const Cache = Cache;
         pub const Map = Map;
 
-        cache: *Cache,
+        cache: Cache,
         map: Map,
 
-        scope_map: Map,
         scope_is_active: bool = false,
+        scope_map: Map,
+
+        op: u64 = 0,
+        op_keys: []OpKey,
+        op_keys_count: u64 = 0,
+
+        last_insert_caused_eviction: bool = undefined,
 
         // TODO: Make these params a struct
         pub fn init(allocator: std.mem.Allocator, cache_value_count_max: u32, map_value_count_max: u32) !Self {
-            var cache = try allocator.create(Cache);
-            errdefer allocator.destroy(cache);
-
-            cache.* = try Cache.init(
+            var cache: Cache = try Cache.init(
                 allocator,
                 cache_value_count_max,
             );
@@ -69,23 +76,27 @@ pub fn CacheMap(
             try map.ensureTotalCapacity(allocator, map_value_count_max);
             errdefer map.deinit(allocator);
 
-            // TODO: This def doesn't need to be map_value_count_max
+            // TODO: Capacity
             var scope_map: Map = .{};
             try scope_map.ensureTotalCapacity(allocator, map_value_count_max);
             errdefer scope_map.deinit(allocator);
+
+            var op_keys = try allocator.alloc(OpKey, map_value_count_max);
+            errdefer allocator.destroy(op_keys);
 
             return Self{
                 .cache = cache,
                 .map = map,
                 .scope_map = scope_map,
+                .op_keys = op_keys,
             };
         }
 
         pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
             self.map.deinit(allocator);
-            self.cache.deinit(allocator);
-            allocator.destroy(self.cache);
             self.scope_map.deinit(allocator);
+            self.cache.deinit(allocator);
+            allocator.free(self.op_keys);
         }
 
         // TODO: Profile me
@@ -94,13 +105,14 @@ pub fn CacheMap(
         }
 
         // TODO: Profile me
-        pub fn get(self: *Self, key: Key) ?*Value {
+        pub inline fn get(self: *Self, key: Key) ?*Value {
             return self.cache.get(key) orelse self.map.getKeyPtr(tombstone_from_key(key));
         }
 
         // TODO: Profile me
         pub fn insert(self: *Self, value: *const Value) void {
-            const insert_result = self.cache.insert_index(value, true);
+            self.last_insert_caused_eviction = false;
+            _ = self.cache.insert_index(value, on_eviction);
 
             // When inserting into the cache, we have a few options, depending on if we evicted
             // something, and if we're running in a scope or not:
@@ -113,23 +125,32 @@ pub fn CacheMap(
             // 3. No eviction. The value didn't exist in the cache, and it mapped to an empty way.
             //    If we have an active scope, store a tombstone in our scope_map. If we don't have
             //    an active scope, we don't need to do anything.
-            if (insert_result.evicted) |evicted| {
-                if (insert_result.was_in_cache) {
-                    // Case 1
-                    if (self.scope_is_active) {
-                        _ = self.scope_map.getOrPutAssumeCapacity(evicted);
-                    }
-                } else {
-                    // Case 2
-                    if (self.scope_is_active) {
-                        _ = self.scope_map.getOrPutAssumeCapacity(evicted);
-                    } else {
-                        _ = self.map.getOrPutAssumeCapacity(evicted);
-                    }
-                }
-            } else if (self.scope_is_active) {
-                // Case 3
+
+            if (self.scope_is_active and !self.last_insert_caused_eviction) {
                 _ = self.scope_map.getOrPutAssumeCapacity(tombstone_from_key(key_from_value(value)));
+            }
+        }
+
+        fn on_eviction(cache: *Cache, value: *const Value, updated: bool) void {
+            var self = @fieldParentPtr(Self, "cache", cache);
+            if (updated) {
+                // Case 1
+                if (self.scope_is_active) {
+                    _ = self.scope_map.getOrPutAssumeCapacity(value.*);
+                }
+            } else {
+                // Case 2
+                if (self.scope_is_active) {
+                    _ = self.scope_map.getOrPutAssumeCapacity(value.*);
+                } else {
+                    var result = self.map.getOrPutAssumeCapacity(value.*);
+
+                    self.op_keys[self.op_keys_count] = .{
+                        .op = self.op,
+                        .key = key_from_value(result.key_ptr),
+                    };
+                    self.op_keys_count += 1;
+                }
             }
         }
 
@@ -175,12 +196,12 @@ pub fn CacheMap(
             // NB To deactivate the scope before iterating and calling insert again
             // TODO: Check the interaction of this with our other map and evictions too....
             self.scope_is_active = false;
-
             var iterator = self.scope_map.keyIterator();
+
             while (iterator.next()) |value| {
                 // The value in scope_map is what the value in our object cache was originally.
                 if (tombstone(value)) {
-                    // Reverting an insert consists of a .remove call. The value in here will be a tombstone (indicating)
+                    // Reverting an insert consists of a .remove call. The value in here will be a tombstone indicating
                     // the original value didn't exist.
                     self.remove(key_from_value(value));
                 } else {
@@ -190,6 +211,14 @@ pub fn CacheMap(
             }
 
             self.scope_map.clearRetainingCapacity();
+        }
+
+        /// Remove any entries in our map that are older than `op`
+        pub fn compact(self: *Self, op: u64) void {
+            for (self.op_keys[0..self.op_keys_count]) |*op_key| {
+                if (op_key.op >= op) continue;
+                _ = self.map.remove(tombstone_from_key(op_key.key));
+            }
         }
     };
 }

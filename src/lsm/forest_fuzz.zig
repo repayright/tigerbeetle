@@ -243,7 +243,7 @@ const Environment = struct {
             fn prefetch_start(getter: *@This()) void {
                 const groove = getter._groove_immutable;
                 groove.prefetch_setup(null);
-                groove.prefetch_enqueue(getter._id);
+                groove.prefetch_enqueue(getter._id, .positive_lookup);
                 groove.prefetch(@This().prefetch_callback_immuttable, &getter.prefetch_context_immutable);
             }
 
@@ -253,7 +253,7 @@ const Environment = struct {
                 groove.prefetch_setup(null);
 
                 if (getter._groove_immutable.get(getter._id)) |immut| {
-                    groove.prefetch_enqueue(immut.timestamp);
+                    groove.prefetch_enqueue(immut.timestamp, .negative_lookup);
                 }
 
                 groove.prefetch(@This().prefetch_callback_mutable, &getter.prefetch_context_mutable);
@@ -280,8 +280,8 @@ const Environment = struct {
     }
 
     fn put_account(env: *Environment, a: *const Account) void {
-        env.forest.grooves.accounts_immutable.put(&StateMachine.AccountImmutable.from_account(a));
-        env.forest.grooves.accounts_mutable.put(&StateMachine.AccountMutable.from_account(a));
+        env.forest.grooves.accounts_immutable.insert(&StateMachine.AccountImmutable.from_account(a));
+        env.forest.grooves.accounts_mutable.insert(&StateMachine.AccountMutable.from_account(a));
     }
 
     fn get_account(env: *Environment, id: u128) ?Account {
