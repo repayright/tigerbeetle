@@ -44,18 +44,13 @@ pub fn TableMemoryType(comptime Table: type) type {
 
         fn stream_peek(context: *const TableMemory, stream_index: u32) error{ Empty, Drained }!Key {
             const stream = context.streams[stream_index];
-            std.log.info("Peeking at stream index {} val is {}", .{ stream_index, stream.len });
-            if (stream.len == 0) {
-                std.log.info("Returning we are empty...", .{});
-                return error.Empty;
-            }
+            if (stream.len == 0) return error.Empty;
             return key_from_value(&stream[0]);
         }
 
         fn stream_pop(context: *TableMemory, stream_index: u32) Value {
             const stream = context.streams[stream_index];
             context.streams[stream_index] = stream[1..];
-            std.log.info("Trying to pop from stream index {} - val {}", .{ stream_index, stream[0] });
             return stream[0];
         }
 

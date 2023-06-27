@@ -177,21 +177,21 @@ pub fn CacheMap(
 
         /// Start a new scope. Within a scope, changes can be commited
         /// or rolled back. Only one scope can be active at a time.
-        pub fn scope_start(self: *Self) void {
+        pub fn scope_open(self: *Self) void {
             assert(!self.scope_is_active);
             self.scope_is_active = true;
         }
 
-        pub fn scope_commit(self: *Self) void {
-            // We don't need to do anything to commit a scope; we can just drop it
-            // and clear the underlying scope map
+        pub fn scope_close(self: *Self, data: enum {persist, discard}) void {
             assert(self.scope_is_active);
-            self.scope_is_active = false;
-            self.scope_map.clearRetainingCapacity();
-        }
 
-        pub fn scope_rollback(self: *Self) void {
-            assert(self.scope_is_active);
+            // We don't need to do anything to persist a scope; we can just drop it
+            // and clear the underlying scope map
+            if (data == .persist) {
+                self.scope_is_active = false;
+                self.scope_map.clearRetainingCapacity();
+                return;
+            }
 
             // NB To deactivate the scope before iterating and calling insert again
             // TODO: Check the interaction of this with our other map and evictions too....
@@ -308,37 +308,37 @@ test "cache_map: unit" {
     cache_map.insert(&.{ .key = 1, .value = 1, .tombstone = false });
     assert(std.meta.eql(cache_map.get(1).?.*, .{ .key = 1, .value = 1, .tombstone = false }));
 
-    // Test scope commiting
-    cache_map.scope_start();
+    // Test scope persisting
+    cache_map.scope_open();
     cache_map.insert(&.{ .key = 2, .value = 2, .tombstone = false });
     assert(std.meta.eql(cache_map.get(2).?.*, .{ .key = 2, .value = 2, .tombstone = false }));
-    cache_map.scope_commit();
+    cache_map.scope_close(.persist);
     assert(std.meta.eql(cache_map.get(2).?.*, .{ .key = 2, .value = 2, .tombstone = false }));
 
-    // Test scope rollback on updates
-    cache_map.scope_start();
+    // Test scope discard on updates
+    cache_map.scope_open();
     cache_map.insert(&.{ .key = 2, .value = 22, .tombstone = false });
     cache_map.insert(&.{ .key = 2, .value = 222, .tombstone = false });
     cache_map.insert(&.{ .key = 2, .value = 2222, .tombstone = false });
     assert(std.meta.eql(cache_map.get(2).?.*, .{ .key = 2, .value = 2222, .tombstone = false }));
-    cache_map.scope_rollback();
+    cache_map.scope_close(.discard);
     assert(std.meta.eql(cache_map.get(2).?.*, .{ .key = 2, .value = 2, .tombstone = false }));
 
-    // Test scope rollback on inserts
-    cache_map.scope_start();
+    // Test scope discard on inserts
+    cache_map.scope_open();
     cache_map.insert(&.{ .key = 3, .value = 3, .tombstone = false });
     assert(std.meta.eql(cache_map.get(3).?.*, .{ .key = 3, .value = 3, .tombstone = false }));
     cache_map.insert(&.{ .key = 3, .value = 33, .tombstone = false });
     assert(std.meta.eql(cache_map.get(3).?.*, .{ .key = 3, .value = 33, .tombstone = false }));
-    cache_map.scope_rollback();
+    cache_map.scope_close(.discard);
     assert(!cache_map.has(3));
     assert(cache_map.get(3) == null);
 
-    // Test scope rollback on removes
-    cache_map.scope_start();
+    // Test scope discard on removes
+    cache_map.scope_open();
     cache_map.remove(2);
     assert(!cache_map.has(2));
     assert(cache_map.get(2) == null);
-    cache_map.scope_rollback();
+    cache_map.scope_close(.discard);
     assert(std.meta.eql(cache_map.get(2).?.*, .{ .key = 2, .value = 2, .tombstone = false }));
 }

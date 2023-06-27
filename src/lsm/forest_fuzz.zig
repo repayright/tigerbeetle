@@ -360,7 +360,7 @@ const Environment = struct {
 
         for (fuzz_ops) |fuzz_op, fuzz_op_index| {
             assert(env.state == .fuzzing);
-            log.debug("Running fuzz_ops[{}/{}] == {}", .{ fuzz_op_index, fuzz_ops.len, fuzz_op });
+            log.debug("Running fuzz_ops[{}/{}] == {}", .{ fuzz_op_index, fuzz_ops.len, fuzz_op.action });
 
             const storage_size_used = env.storage.size_used();
             log.debug("storage.size_used = {}/{}", .{ storage_size_used, env.storage.size });

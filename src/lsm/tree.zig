@@ -240,27 +240,23 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type, comptime tree_
             tree.manifest.deinit(allocator);
         }
 
-        /// Start a new scope. Within a scope, changes can be commited
+        /// Open a new scope. Within a scope, changes can be commited
         /// or rolled back. Only one scope can be active at a time.
-        pub fn scope_start(tree: *Tree) void {
+        pub fn scope_open(tree: *Tree) void {
             assert(tree.active_scope == null);
 
             // TODO: Make this copy more explicit
             tree.active_scope = tree.table_mutable.value_context;
         }
 
-        pub fn scope_commit(tree: *Tree) void {
-            // We don't need to do anything to commit a scope; we can just drop it
+        pub fn scope_close(tree: *Tree, data: enum {persist, discard}) void {
             assert(tree.active_scope != null);
 
-            tree.active_scope = null;
-        }
+            if (data == .discard) {
+                // TODO: Make this copy more explicit
+                tree.table_mutable.value_context = tree.active_scope.?;
+            }
 
-        pub fn scope_rollback(tree: *Tree) void {
-            assert(tree.active_scope != null);
-
-            // TODO: Make this copy more explicit
-            tree.table_mutable.value_context = tree.active_scope.?;
             tree.active_scope = null;
         }
 
@@ -585,6 +581,9 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type, comptime tree_
                 constants.lsm_batch_multiple,
             });
 
+            // TODO:
+            // Call table_mutable.compact each beat (sorts each buffer)
+
             const BeatKind = enum { half_bar_start, half_bar_middle, half_bar_end };
             const beat_kind = if (compaction_beat == 0 or
                 compaction_beat == half_bar_beat_count)
@@ -898,6 +897,7 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type, comptime tree_
 
         /// Called after the last beat of a full compaction bar.
         fn swap_mutable_and_immutable(tree: *Tree) void {
+            std.log.info("swap_mutable_and_immutable called", .{});
             assert(tree.table_immutable.mutability.immutable.flushed);
             assert((tree.compaction_op + 1) % constants.lsm_batch_multiple == 0);
             assert(tree.compaction_op + 1 == tree.lookup_snapshot_max);

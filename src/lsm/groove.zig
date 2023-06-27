@@ -625,11 +625,7 @@ pub fn GrooveType(
         /// We tolerate duplicate IDs enqueued by the state machine.
         /// For example, if all unique operations require the same two dependencies.
         pub inline fn prefetch_enqueue(groove: *Groove, key: PrimaryKey, lookup_hint: enum { negative_lookup, positive_lookup }) void {
-            if (lookup_hint == .negative_lookup) {
-                groove.prefetch_ids.putAssumeCapacity(key, {});
-                return;
-            }
-
+            _ = lookup_hint;
             if (!groove.objects_cache.has(key)) {
                 groove.prefetch_ids.putAssumeCapacity(key, {});
             }
@@ -769,6 +765,7 @@ pub fn GrooveType(
             }
 
             fn lookup_with_timestamp(worker: *PrefetchWorker, timestamp: u64) void {
+                std.log.info("lookup_with_timestamp: {}", .{timestamp});
                 worker.context.groove.objects.lookup_from_levels(
                     lookup_object_callback,
                     &worker.lookup.object,
@@ -781,6 +778,7 @@ pub fn GrooveType(
                 completion: *ObjectTree.LookupContext,
                 result: ?*const Object,
             ) void {
+                std.log.info("lookup_object_callback: {}", .{result});
                 const worker = LookupContext.parent(completion);
                 worker.lookup = undefined;
 
@@ -796,7 +794,7 @@ pub fn GrooveType(
         /// Insert the value into the objects tree and associated index trees, asserting that it doesn't
         /// already exist.
         pub fn insert(groove: *Groove, object: *const Object) void {
-            assert(!groove.objects_cache.has(@field(object, primary_field)));
+            // assert(!groove.objects_cache.has(@field(object, primary_field)));
             groove.upsert(object);
         }
 
@@ -841,33 +839,26 @@ pub fn GrooveType(
             }
         }
 
-        pub fn scope_start(groove: *Groove) void {
-            groove.objects_cache.scope_start();
+        pub fn scope_open(groove: *Groove) void {
+            groove.objects_cache.scope_open();
             inline for (std.meta.fields(IndexTrees)) |field| {
-                @field(groove.indexes, field.name).scope_start();
+                @field(groove.indexes, field.name).scope_open();
             }
         }
 
-        pub fn scope_commit(groove: *Groove) void {
-            groove.objects_cache.scope_commit();
+        pub fn scope_close(groove: *Groove, data: enum {persist, discard}) void {
+            // To close a scope, we do two things, at two different logical levels:
+            // 1. Reset each Tree's table_mutable to the index in the scope. Since table_mutable is a log
+            //    of operations, this effectively undoes them
+            // 2. Revert our objects_cache back to the state when the scope was taken. This is a bit more
+            //    involved. We have eviction handling (objects_cache is a hybrid SetAssociateCache with a
+            //    HashMap to catch evictions). When a scope is definied, our eviction handler will do an
+            //    extra check to see if the value being evicted is because of an update. If so, it'll store
+            //    the _first_ instance in a map. On revert, we apply the values in this map over the current
+            //    object cache.
+            groove.objects_cache.scope_close(data);
             inline for (std.meta.fields(IndexTrees)) |field| {
-                @field(groove.indexes, field.name).scope_commit();
-            }
-        }
-
-        // To rollback a scope, we do two things, at two different logical levels:
-        // 1. Reset each Tree's table_mutable to the index in the scope. Since table_mutable is a log
-        //    of operations, this effectively undoes them
-        // 2. Revert our objects_cache back to the state when the scope was taken. This is a bit more
-        //    involved. We have eviction handling (objects_cache is a hybrid SetAssociateCache with a
-        //    HashMap to catch evictions). When a scope is definied, our eviction handler will do an
-        //    extra check to see if the value being evicted is because of an update. If so, it'll store
-        //    the _first_ instance in a map. On revert, we apply the values in this map over the current
-        //    object cache.
-        pub fn scope_rollback(groove: *Groove) void {
-            groove.objects_cache.scope_rollback();
-            inline for (std.meta.fields(IndexTrees)) |field| {
-                @field(groove.indexes, field.name).scope_rollback();
+                @field(groove.indexes, field.name).scope_close(data);
             }
         }
 
@@ -1003,7 +994,9 @@ pub fn GrooveType(
 
             // TODO: GC the objects_cache if we're at the end of a bar
             groove.objects_cache.op = op;
-            groove.objects_cache.compact(op - 2);
+            if (op > 2) {
+                groove.objects_cache.compact(op - 2);
+            }
         }
 
         pub fn compact_end(groove: *Groove) void {

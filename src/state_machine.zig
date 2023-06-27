@@ -674,17 +674,17 @@ pub fn StateMachineType(
             callback(self);
         }
 
-        fn scope_start(self: *StateMachine, comptime operation: Operation) void {
+        fn scope_open(self: *StateMachine, comptime operation: Operation) void {
             comptime assert(operation != .lookup_accounts and operation != .lookup_transfers);
 
             switch (operation) {
                 .create_accounts => {
-                    self.forest.grooves.accounts_immutable.scope_start();
-                    self.forest.grooves.accounts_mutable.scope_start();
+                    self.forest.grooves.accounts_immutable.scope_open();
+                    self.forest.grooves.accounts_mutable.scope_open();
                 },
                 .create_transfers => {
-                    self.forest.grooves.accounts_mutable.scope_start();
-                    self.forest.grooves.transfers.scope_start();
+                    self.forest.grooves.accounts_mutable.scope_open();
+                    self.forest.grooves.transfers.scope_open();
                     // TODO
                     // self.forest.grooves.posted
                 },
@@ -692,35 +692,17 @@ pub fn StateMachineType(
             }
         }
 
-        fn scope_commit(self: *StateMachine, comptime operation: Operation) void {
+        fn scope_close(self: *StateMachine, comptime operation: Operation, data: enum {persist, discard }) void {
             comptime assert(operation != .lookup_accounts and operation != .lookup_transfers);
 
             switch (operation) {
                 .create_accounts => {
-                    self.forest.grooves.accounts_immutable.scope_commit();
-                    self.forest.grooves.accounts_mutable.scope_commit();
+                    self.forest.grooves.accounts_immutable.scope_close(data);
+                    self.forest.grooves.accounts_mutable.scope_close(data);
                 },
                 .create_transfers => {
-                    self.forest.grooves.accounts_mutable.scope_commit();
-                    self.forest.grooves.transfers.scope_commit();
-                    // TODO
-                    // self.forest.grooves.posted
-                },
-                else => unreachable,
-            }
-        }
-
-        fn scope_rollback(self: *StateMachine, comptime operation: Operation) void {
-            comptime assert(operation != .lookup_accounts and operation != .lookup_transfers);
-
-            switch (operation) {
-                .create_accounts => {
-                    self.forest.grooves.accounts_immutable.scope_rollback();
-                    self.forest.grooves.accounts_mutable.scope_rollback();
-                },
-                .create_transfers => {
-                    self.forest.grooves.accounts_mutable.scope_rollback();
-                    self.forest.grooves.transfers.scope_rollback();
+                    self.forest.grooves.accounts_mutable.scope_close(data);
+                    self.forest.grooves.transfers.scope_close(data);
                     // TODO
                     // self.forest.grooves.posted
                 },
@@ -752,7 +734,7 @@ pub fn StateMachineType(
                         if (chain == null) {
                             chain = index;
                             assert(chain_broken == false);
-                            self.scope_start(operation);
+                            self.scope_open(operation);
                         }
 
                         if (index == events.len - 1) break :blk .linked_event_chain_open;
@@ -781,7 +763,7 @@ pub fn StateMachineType(
                         if (!chain_broken) {
                             chain_broken = true;
                             // Our chain has just been broken, rollback the scope we started above
-                            self.scope_rollback(operation);
+                            self.scope_close(operation, .discard);
 
                             // Add errors for rolled back events in FIFO order:
                             var chain_index = chain_start_index;
@@ -804,7 +786,7 @@ pub fn StateMachineType(
                     chain_broken = false;
 
                     // We've finished this linked chain, and all events have applied successfully.
-                    self.scope_commit(operation);
+                    self.scope_close(operation, .persist);
                 }
             }
             assert(chain == null);

@@ -548,6 +548,7 @@ pub fn GridType(comptime Storage: type) type {
                 const cache_block = grid.cache_blocks[cache_index];
 
                 const header = mem.bytesAsValue(vsr.Header, cache_block[0..@sizeOf(vsr.Header)]);
+                std.log.info("Read a block from {} we expected {}", .{read.address, header.op});
                 assert(header.op == read.address);
                 assert(header.checksum == read.checksum);
                 if (constants.verify) grid.verify_read(read.address, cache_block);

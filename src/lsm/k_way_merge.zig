@@ -87,7 +87,6 @@ pub fn KWayMergeIterator(
         }
 
         pub fn pop(it: *Self) ?Value {
-            std.log.info("Popping from context {*} with it {*}", .{it.context, it});
             while (it.pop_internal()) |value| {
                 const key = key_from_value(&value);
                 if (it.previous_key_popped) |previous| {

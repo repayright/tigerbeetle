@@ -247,7 +247,7 @@ pub fn CompactionType(
             var immutable_values_in = compaction.immutable_values_in;
             var iterator = compaction.context.table_info_a.immutable;
             while (iterator.pop()) |value| : (i += 1) {
-                std.log.info("Popped: {}", .{value});
+                // std.log.info("Popped: {}", .{value});
                 if (i > 0 and compare_keys(key_from_value(&immutable_values_in[i - 1]), key_from_value(&value)) == .eq) {
                     i -= 1;
                 }
