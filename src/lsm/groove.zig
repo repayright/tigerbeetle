@@ -13,6 +13,7 @@ const GridType = @import("grid.zig").GridType;
 const CompositeKey = @import("composite_key.zig").CompositeKey;
 const NodePool = @import("node_pool.zig").NodePool(constants.lsm_manifest_node_size, 16);
 const CacheMap = @import("cache_map.zig").CacheMap;
+const ScopeCloseMode = @import("tree.zig").ScopeCloseMode;
 
 const snapshot_latest = @import("tree.zig").snapshot_latest;
 const compaction_snapshot_for_op = @import("tree.zig").compaction_snapshot_for_op;
@@ -396,50 +397,60 @@ pub fn GrooveType(
     }.HelperType;
 
     const tombstone_bit = 1 << (64 - 1);
+
+    const ObjectsCacheHelpers = struct {
+        const HashMapContextValue = struct {
+            pub inline fn eql(_: HashMapContextValue, a: Object, b: Object) bool {
+                return equal(key_from_value(&a), key_from_value(&b));
+            }
+
+            pub inline fn hash(_: HashMapContextValue, value: Object) u64 {
+                return stdx.hash_inline(key_from_value(&value));
+            }
+        };
+
+        inline fn key_from_value(value: *const Object) PrimaryKey {
+            if (has_id) {
+                return value.id;
+            } else {
+                return value.timestamp & ~@as(u64, tombstone_bit);
+            }
+        }
+
+        inline fn hash(key: PrimaryKey) u64 {
+            return stdx.hash_inline(key);
+        }
+
+        inline fn equal(a: PrimaryKey, b: PrimaryKey) bool {
+            return a == b;
+        }
+
+        inline fn tombstone_from_key(a: PrimaryKey) Object {
+            var obj: Object = undefined;
+            if (has_id) {
+                obj.id = a;
+                obj.timestamp = 0;
+            } else {
+                obj.timestamp = a;
+            }
+            obj.timestamp |= tombstone_bit;
+            return obj;
+        }
+
+        inline fn tombstone(a: *const Object) bool {
+            return (a.timestamp & tombstone_bit) != 0;
+        }
+    };
+
     const _ObjectsCache = CacheMap(
         PrimaryKey,
         Object,
-        struct {
-            inline fn key_from_value(value: *const Object) PrimaryKey {
-                if (has_id) {
-                    return value.id;
-                } else {
-                    return value.timestamp;
-                }
-            }
-        }.key_from_value,
-        struct {
-            inline fn hash(key: PrimaryKey) u64 {
-                return stdx.hash_inline(key);
-            }
-        }.hash,
-        struct {
-            inline fn equal(a: PrimaryKey, b: PrimaryKey) bool {
-                return a == b;
-            }
-        }.equal,
-        _ObjectTree.Table.HashMapContextValue,
-        struct {
-            // NEed to make this more efficient!
-            inline fn tombstone_from_key(a: PrimaryKey) Object {
-                var obj: Object = undefined;
-                if (has_id) {
-                    obj.id = a;
-                    obj.timestamp = 0;
-                } else {
-                    obj.timestamp = a;
-                }
-                obj.timestamp |= tombstone_bit;
-                return obj;
-            }
-        }.tombstone_from_key,
-        struct {
-            // NEed to make this more efficient!
-            inline fn tombstone(a: *const Object) bool {
-                return (a.timestamp & tombstone_bit) != 0;
-            }
-        }.tombstone,
-
+        ObjectsCacheHelpers.key_from_value,
+        ObjectsCacheHelpers.hash,
+        ObjectsCacheHelpers.equal,
+        ObjectsCacheHelpers.HashMapContextValue,
+        ObjectsCacheHelpers.tombstone_from_key,
+        ObjectsCacheHelpers.tombstone,
         @typeName(Object),
     );
 
@@ -786,7 +797,7 @@ pub fn GrooveType(
                 const object = result.?;
                 assert(!ObjectTreeHelpers(Object).tombstone(object));
 
-                worker.context.groove.objects_cache.insert(object);
+                worker.context.groove.objects_cache.upsert(object);
                 worker.lookup_start_next();
             }
         };
@@ -794,16 +805,12 @@ pub fn GrooveType(
         /// Insert the value into the objects tree and associated index trees, asserting that it doesn't
         /// already exist.
         pub fn insert(groove: *Groove, object: *const Object) void {
-            // assert(!groove.objects_cache.has(@field(object, primary_field)));
-            groove.upsert(object);
-        }
+            assert(!groove.objects_cache.has(@field(object, primary_field)));
 
-        /// Insert the value (or update it, if it exists)
-        pub fn upsert(groove: *Groove, object: *const Object) void {
-            groove.objects.put(object);
+            groove.objects_cache.upsert(object);
+
             if (has_id) groove.ids.put(&IdTreeValue{ .id = object.id, .timestamp = object.timestamp });
-
-            groove.objects_cache.insert(object);
+            groove.objects.put(object);
 
             inline for (std.meta.fields(IndexTrees)) |field| {
                 const Helper = IndexTreeFieldHelperType(field.name);
@@ -811,6 +818,51 @@ pub fn GrooveType(
                 if (Helper.derive_index(object)) |index| {
                     const index_value = Helper.derive_value(object, index);
                     @field(groove.indexes, field.name).put(&index_value);
+                }
+            }
+        }
+
+        /// Insert the value (or update it, if it exists)
+        /// Update the object and index trees by diff'ing the old and new values.
+        pub fn upsert(groove: *Groove, new: *const Object) void {
+            const maybe_old = groove.objects_cache.get(@field(new, primary_field));
+
+            if (maybe_old == null) {
+                return groove.insert(new);
+            }
+
+            const old = maybe_old.?;
+
+            assert(@field(old, primary_field) == @field(new, primary_field));
+            assert(old.timestamp == new.timestamp);
+
+            groove.objects_cache.upsert(new);
+
+            // The ID can't change, so no need to update the ID tree.
+
+            // Update the object tree entry if any of the fields (even ignored) are different.
+            if (!std.mem.eql(u8, std.mem.asBytes(old), std.mem.asBytes(new))) {
+                // Unlike the index trees, the new and old values in the object tree share the
+                // same key. Therefore put() is sufficient to overwrite the old value.
+                groove.objects.put(new);
+            }
+
+            inline for (std.meta.fields(IndexTrees)) |field| {
+                const Helper = IndexTreeFieldHelperType(field.name);
+                const old_index = Helper.derive_index(old);
+                const new_index = Helper.derive_index(new);
+
+                // Only update the indexes that change.
+                if (!std.meta.eql(old_index, new_index)) {
+                    if (old_index) |index| {
+                        const old_index_value = Helper.derive_value(old, index);
+                        @field(groove.indexes, field.name).remove(&old_index_value);
+                    }
+
+                    if (new_index) |index| {
+                        const new_index_value = Helper.derive_value(new, index);
+                        @field(groove.indexes, field.name).put(&new_index_value);
+                    }
                 }
             }
         }
@@ -846,7 +898,7 @@ pub fn GrooveType(
             }
         }
 
-        pub fn scope_close(groove: *Groove, data: enum {persist, discard}) void {
+        pub fn scope_close(groove: *Groove, data: ScopeCloseMode) void {
             // To close a scope, we do two things, at two different logical levels:
             // 1. Reset each Tree's table_mutable to the index in the scope. Since table_mutable is a log
             //    of operations, this effectively undoes them
@@ -861,42 +913,6 @@ pub fn GrooveType(
                 @field(groove.indexes, field.name).scope_close(data);
             }
         }
-
-        // /// Update the object and index trees by diff'ing the old and new values.
-        // fn update(groove: *Groove, old: *const Object, new: *const Object) void {
-        //     assert(@field(old, primary_field) == @field(new, primary_field));
-        //     assert(old.timestamp == new.timestamp);
-
-        //     // TODO: Do we need to remove...? Maybe only
-        //     // if has_id and old.id != new.id
-        //     groove.objects_cache.insert(new);
-
-        //     // Update the object tree entry if any of the fields (even ignored) are different.
-        //     if (!std.mem.eql(u8, std.mem.asBytes(old), std.mem.asBytes(new))) {
-        //         // Unlike the index trees, the new and old values in the object tree share the
-        //         // same key. Therefore put() is sufficient to overwrite the old value.
-        //         groove.objects.put(new);
-        //     }
-
-        //     inline for (std.meta.fields(IndexTrees)) |field| {
-        //         const Helper = IndexTreeFieldHelperType(field.name);
-        //         const old_index = Helper.derive_index(old);
-        //         const new_index = Helper.derive_index(new);
-
-        //         // Only update the indexes that change.
-        //         if (!std.meta.eql(old_index, new_index)) {
-        //             if (old_index) |index| {
-        //                 const old_index_value = Helper.derive_value(old, index);
-        //                 @field(groove.indexes, field.name).remove(&old_index_value);
-        //             }
-
-        //             if (new_index) |index| {
-        //                 const new_index_value = Helper.derive_value(new, index);
-        //                 @field(groove.indexes, field.name).put(&new_index_value);
-        //             }
-        //         }
-        //     }
-        // }
 
         /// Maximum number of pending sync callbacks (ObjectTree + IdTree + IndexTrees).
         const join_pending_max = 1 + @boolToInt(has_id) + std.meta.fields(IndexTrees).len;
@@ -978,6 +994,7 @@ pub fn GrooveType(
         }
 
         pub fn compact(groove: *Groove, callback: Callback, op: u64) void {
+            std.log.info("Um inside groove compact?", .{});
             // Start a compacting join operation.
             const Join = JoinType(.compacting);
             Join.start(groove, callback);
@@ -992,7 +1009,7 @@ pub fn GrooveType(
                 @field(groove.indexes, field.name).compact(compact_callback, op);
             }
 
-            // TODO: GC the objects_cache if we're at the end of a bar
+            // Compact the objects_cache.
             groove.objects_cache.op = op;
             if (op > 2) {
                 groove.objects_cache.compact(op - 2);

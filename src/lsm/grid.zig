@@ -444,8 +444,9 @@ pub fn GridType(comptime Storage: type) type {
             assert(!grid.read_resolving);
 
             // Insert the write block into the cache, and give the evicted block to the writer.
-            const cache_index = grid.cache.insert_index(&completed_write.address, on_eviction);
+            const cache_index = grid.cache.upsert_index(&completed_write.address, on_eviction);
             const cache_block = &grid.cache_blocks[cache_index];
+            std.log.info("Just wrote to {}", .{cache_index});
             std.mem.swap(BlockPtr, cache_block, completed_write.block);
             std.mem.set(u8, completed_write.block.*, 0);
 
@@ -548,7 +549,7 @@ pub fn GridType(comptime Storage: type) type {
                 const cache_block = grid.cache_blocks[cache_index];
 
                 const header = mem.bytesAsValue(vsr.Header, cache_block[0..@sizeOf(vsr.Header)]);
-                std.log.info("Read a block from {} we expected {}", .{read.address, header.op});
+                std.log.info("Read a block from {}, op header was {}", .{ read.address, header.op });
                 assert(header.op == read.address);
                 assert(header.checksum == read.checksum);
                 if (constants.verify) grid.verify_read(read.address, cache_block);
@@ -605,7 +606,7 @@ pub fn GridType(comptime Storage: type) type {
             const iop_block = &grid.read_iop_blocks[grid.read_iops.index(iop)];
 
             // Insert the block into the cache, and give the evicted block to `iop`.
-            const cache_index = grid.cache.insert_index(&read.address, on_eviction);
+            const cache_index = grid.cache.upsert_index(&read.address, on_eviction);
             const cache_block = &grid.cache_blocks[cache_index];
             std.mem.swap(BlockPtr, iop_block, cache_block);
             std.mem.set(u8, iop_block.*, 0);
@@ -831,7 +832,7 @@ pub fn GridType(comptime Storage: type) type {
             assert(std.mem.eql(u8, cached_block, actual_block));
         }
 
-        // No-op eviction handler for insert_index.
+        // No-op eviction handler for upsert_index.
         fn on_eviction(cache: *Cache, value: *const u64, updated: bool) void {
             _ = cache;
             _ = value;

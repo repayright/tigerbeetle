@@ -19,6 +19,7 @@ const bloom_filter = @import("bloom_filter.zig");
 const CompositeKey = @import("composite_key.zig").CompositeKey;
 const NodePool = @import("node_pool.zig").NodePool(constants.lsm_manifest_node_size, 16);
 const RingBuffer = @import("../ring_buffer.zig").RingBuffer;
+pub const ScopeCloseMode = enum { persist, discard };
 
 /// We reserve maxInt(u64) to indicate that a table has not been deleted.
 /// Tables that have not been deleted have snapshot_max of maxInt(u64).
@@ -249,7 +250,7 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type, comptime tree_
             tree.active_scope = tree.table_mutable.value_context;
         }
 
-        pub fn scope_close(tree: *Tree, data: enum {persist, discard}) void {
+        pub fn scope_close(tree: *Tree, data: ScopeCloseMode) void {
             assert(tree.active_scope != null);
 
             if (data == .discard) {
@@ -278,7 +279,7 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type, comptime tree_
             snapshot: u64,
             key: Key,
         ) void {
-            std.log.info("Looking up from levels...", .{});
+            // std.log.info("Looking up from levels...", .{});
             assert(tree.lookup_snapshot_max >= snapshot);
 
             var index_block_count: u8 = 0;
@@ -530,6 +531,9 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type, comptime tree_
 
             tree.compaction_op = op;
 
+            // TODO - does this interact with the vsr_state check below.
+            tree.table_mutable.compact();
+
             if (op < constants.lsm_batch_multiple) {
                 // There is nothing to compact for the first measure.
                 // We skip the main compaction code path first compaction bar entirely because it
@@ -538,7 +542,7 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type, comptime tree_
 
                 tree.lookup_snapshot_max = op + 1;
                 if (op + 1 == constants.lsm_batch_multiple) {
-                    // tree.compact_mutable_table_into_immutable();
+                    tree.swap_mutable_and_immutable();
                 }
 
                 tree.compaction_callback = .{ .next_tick = callback };
@@ -580,9 +584,6 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type, comptime tree_
                 compaction_beat + 1,
                 constants.lsm_batch_multiple,
             });
-
-            // TODO:
-            // Call table_mutable.compact each beat (sorts each buffer)
 
             const BeatKind = enum { half_bar_start, half_bar_middle, half_bar_end };
             const beat_kind = if (compaction_beat == 0 or
@@ -888,16 +889,11 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type, comptime tree_
             if (compacted_levels_odd) {
                 // Assert all visible tables haven't overflowed their max per level.
                 tree.manifest.assert_level_table_counts();
-
-                // Convert mutable table to immutable table for next bar. The compaction
-                // work is paced automatically.
-                tree.swap_mutable_and_immutable();
             }
         }
 
         /// Called after the last beat of a full compaction bar.
         fn swap_mutable_and_immutable(tree: *Tree) void {
-            std.log.info("swap_mutable_and_immutable called", .{});
             assert(tree.table_immutable.mutability.immutable.flushed);
             assert((tree.compaction_op + 1) % constants.lsm_batch_multiple == 0);
             assert(tree.compaction_op + 1 == tree.lookup_snapshot_max);

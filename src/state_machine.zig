@@ -9,6 +9,7 @@ const tracer = @import("tracer.zig");
 const global_constants = @import("constants.zig");
 const tb = @import("tigerbeetle.zig");
 const snapshot_latest = @import("lsm/tree.zig").snapshot_latest;
+const ScopeCloseMode = @import("lsm/tree.zig").ScopeCloseMode;
 const WorkloadType = @import("state_machine/workload.zig").WorkloadType;
 
 const Account = tb.Account;
@@ -283,6 +284,7 @@ pub fn StateMachineType(
         open_callback: ?fn (*StateMachine) void = null,
         compact_callback: ?fn (*StateMachine) void = null,
         checkpoint_callback: ?fn (*StateMachine) void = null,
+        hack_time: u64 = 0,
 
         tracer_slot: ?tracer.SpanStart,
 
@@ -614,6 +616,7 @@ pub fn StateMachineType(
                 @src(),
             );
 
+            self.hack_time = 0;
             const result = switch (operation) {
                 .root => unreachable,
                 .register => 0,
@@ -623,6 +626,7 @@ pub fn StateMachineType(
                 .lookup_transfers => self.execute_lookup_transfers(input, output),
                 else => unreachable,
             };
+            std.log.info("Took {}ms to run groove ops", .{self.hack_time / 1000 / 1000});
 
             tracer.end(
                 &self.tracer_slot,
@@ -692,7 +696,7 @@ pub fn StateMachineType(
             }
         }
 
-        fn scope_close(self: *StateMachine, comptime operation: Operation, data: enum {persist, discard }) void {
+        fn scope_close(self: *StateMachine, comptime operation: Operation, data: ScopeCloseMode) void {
             comptime assert(operation != .lookup_accounts and operation != .lookup_transfers);
 
             switch (operation) {
@@ -970,6 +974,10 @@ pub fn StateMachineType(
 
             var t2 = t.*;
             t2.amount = amount;
+
+            var timer = std.time.Timer.start() catch unreachable;
+            timer.reset();
+
             self.forest.grooves.transfers.insert(&t2);
 
             var dr_mut_new = dr_mut.*;
@@ -983,6 +991,9 @@ pub fn StateMachineType(
             }
             self.forest.grooves.accounts_mutable.upsert(&dr_mut_new);
             self.forest.grooves.accounts_mutable.upsert(&cr_mut_new);
+            const time_groove_ops = timer.read();
+            self.hack_time += time_groove_ops;
+            // std.log.info("Took {}us to do groove ops.", .{time_groove_ops / 1000});
 
             self.commit_timestamp = t.timestamp;
             return .ok;

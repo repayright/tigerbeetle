@@ -244,8 +244,8 @@ pub fn parse_args(allocator: std.mem.Allocator) !Command {
                         allocator,
                         addresses orelse fatal("required: --addresses", .{}),
                     ),
-                    .cache_accounts = 65536,
-                    .cache_transfers = 32768,
+                    .cache_accounts = 1048576,
+                    .cache_transfers = 1048576,
                     .cache_transfers_posted = 65536,
                     .storage_size_limit = parse_storage_size(storage_size_limit),
                     .cache_grid_blocks = parse_cache_size_to_count(

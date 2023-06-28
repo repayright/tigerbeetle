@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -eEuo pipefail
 
-zig build install -Drelease-safe -Dconfig=production
+zig build install -Dconfig=production
 
 function onerror {
-    kill %1
+    kill %2
 }
 trap onerror EXIT
 
@@ -18,7 +18,7 @@ fi
 
 ./tigerbeetle format --cluster=0 --replica=0 --replica-count=1 "$FILE"
 
-# tracy -a 127.0.0.1 &
+tracy -a 127.0.0.1 &
 sleep 0.1
 
 PORT=$(python -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()')

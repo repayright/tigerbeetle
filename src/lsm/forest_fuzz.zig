@@ -280,8 +280,8 @@ const Environment = struct {
     }
 
     fn put_account(env: *Environment, a: *const Account) void {
-        env.forest.grooves.accounts_immutable.insert(&StateMachine.AccountImmutable.from_account(a));
-        env.forest.grooves.accounts_mutable.insert(&StateMachine.AccountMutable.from_account(a));
+        env.forest.grooves.accounts_immutable.upsert(&StateMachine.AccountImmutable.from_account(a));
+        env.forest.grooves.accounts_mutable.upsert(&StateMachine.AccountMutable.from_account(a));
     }
 
     fn get_account(env: *Environment, id: u128) ?Account {

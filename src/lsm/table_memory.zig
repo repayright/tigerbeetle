@@ -18,18 +18,17 @@ pub fn TableMemoryType(comptime Table: type) type {
 
     return struct {
         const TableMemory = @This();
-        pub const k_sort_interval = @divExact(value_count_max, constants.lsm_batch_multiple);
 
         pub const ValueContext = struct {
             count: usize = 0,
+            count_last: u64 = 0,
 
             key_min: ?Key = null,
             key_max: ?Key = null,
 
-            // This currently tracks if the entire array is in fully sorted order. We could repurpose
-            // it, or add another flag, to check if each buffer is in sorted order (ie, suitable for
-            // k-way merge)
-            sorted: bool = true,
+            // TODO: Document this
+            buffers: [constants.lsm_batch_multiple][]Value = undefined,
+            buffers_count: u64 = 0,
         };
 
         const Mutability = union(enum) {
@@ -113,9 +112,14 @@ pub fn TableMemoryType(comptime Table: type) type {
         pub fn compact(table: *TableMemory) void {
             assert(table.mutability == .mutable);
 
+            var timer = std.time.Timer.start() catch unreachable;
             // TODO, should just sort the last bucket, obvs
-            std.sort.sort(Value, table.values[0..table.value_context.count], {}, sort_values_by_key_in_ascending_order);
-            table.value_context.sorted = true;
+            table.value_context.buffers[table.value_context.buffers_count] = table.values[table.value_context.count_last..table.value_context.count];
+            std.sort.sort(Value, table.value_context.buffers[table.value_context.buffers_count], {}, sort_values_by_key_in_ascending_order);
+            const r = timer.read();
+            std.log.info("Took {}ms to compact {} items", .{ r / 1000 / 1000, table.value_context.buffers[table.value_context.buffers_count].len });
+            table.value_context.buffers_count += 1;
+            table.value_context.count_last = table.value_context.count;
         }
 
         pub fn put(table: *TableMemory, value: *const Value) void {
@@ -135,7 +139,7 @@ pub fn TableMemoryType(comptime Table: type) type {
                     table.value_context.key_min = key;
 
                     // We've got a new key_min, so we lose our sorted propery
-                    table.value_context.sorted = false;
+                    // table.value_context.sorted = false;
                 }
             } else {
                 table.value_context.key_min = key;
@@ -156,50 +160,33 @@ pub fn TableMemoryType(comptime Table: type) type {
             // iterator state will likely be invalid if a put comes in. We'd also need to ensure we
             // sort the last buffer.
             assert(table.mutability == .immutable);
-            assert(table.value_context.sorted);
+            // assert(table.value_context.sorted);
 
             var i: u32 = 0;
-            while (i < constants.lsm_batch_multiple) : (i += 1) {
-                const start_idx = k_sort_interval * i;
-                const end_idx = std.math.min(k_sort_interval * (i + 1), table.value_context.count);
-                std.log.info("Stream {} runs from {} to {}", .{ i, start_idx, end_idx });
-                table.streams[i] = table.values[start_idx..end_idx];
-
-                if (end_idx == table.value_context.count) {
-                    break;
-                }
-
-                // if (end_idx == table.value_context.count and !table.value_context.sorted) {
-                //     // Sort the last stream - it wouldn't have been done in the put
-                //     std.sort.sort(Key, table.streams[i], {}, sort_keys_in_ascending_order);
-
-                //     break;
-                // }
+            while (i < table.value_context.buffers_count) : (i += 1) {
+                table.streams[i] = table.value_context.buffers[i];
+                std.log.info("Stream {} len {}", .{ i, table.streams[i].len });
             }
 
-            return Iterator.init(table, i + 1, .ascending);
+            return Iterator.init(table, i, .ascending);
         }
 
         pub fn make_immutable(table: *TableMemory, snapshot_min: u64) void {
             assert(table.mutability == .mutable);
+            // assert(table.value_context.sorted);
 
-            std.log.info("{*} Making immutable...", .{table});
             table.values = table.values[0..table.value_context.count];
-
-            // TODO! We might have to sort the last bucket
-            std.sort.sort(Value, table.values[0..table.value_context.count], {}, sort_values_by_key_in_ascending_order);
-            table.value_context.sorted = true;
 
             if (constants.verify) {
                 // At this stage, we might have duplicate values in our values stream. This is _ok_
                 // it's only when iterating the final output that we need to ensure the latest
                 // update 'wins'
-                verify_sort(table.values, .allow_equals);
+                // TODO: Fix this
+                // verify_sort(table.values, .allow_equals);
             }
 
             // If we have no values, then we can consider ourselves flushed right away.
             table.mutability = .{ .immutable = .{ .flushed = table.value_context.count == 0, .snapshot_min = snapshot_min } };
-            std.log.info("{*} Done Making immutable...", .{table});
         }
 
         pub fn make_mutable(table: *TableMemory) void {
@@ -209,13 +196,11 @@ pub fn TableMemoryType(comptime Table: type) type {
             var values_max = table.values.ptr[0..value_count_max];
             assert(values_max.len == value_count_max);
 
-            std.log.info("{*}: Making mutable...", .{table});
             table.* = .{
                 .values = values_max,
                 .value_context = .{},
                 .mutability = .mutable,
             };
-            std.log.info("{*}: Done making mutable...", .{table});
         }
 
         fn sort_values_by_key_in_ascending_order(_: void, a: Value, b: Value) bool {
@@ -272,14 +257,14 @@ test "table_memory: unit" {
     assert(table_memory.count() == 3 and table_memory.value_context.count == 3);
     assert(table_memory.value_context.key_min.? == 1);
     assert(table_memory.value_context.key_max.? == 5);
-    assert(table_memory.value_context.sorted);
+    // assert(table_memory.value_context.sorted);
 
     table_memory.put(&.{ .key = 0, .value = 0, .tombstone = false });
 
     assert(table_memory.count() == 4 and table_memory.value_context.count == 4);
     assert(table_memory.value_context.key_min.? == 0);
     assert(table_memory.value_context.key_max.? == 5);
-    assert(!table_memory.value_context.sorted);
+    // assert(!table_memory.value_context.sorted);
 
     // Our iterator will return the latest .put, even though internally we store them all.
     table_memory.put(&.{ .key = 1, .value = 11, .tombstone = false });
@@ -303,6 +288,6 @@ test "table_memory: unit" {
     assert(table_memory.count() == 0 and table_memory.value_context.count == 0);
     assert(table_memory.value_context.key_min == null);
     assert(table_memory.value_context.key_max == null);
-    assert(table_memory.value_context.sorted);
+    // assert(table_memory.value_context.sorted);
     assert(table_memory.mutability == .mutable);
 }

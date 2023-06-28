@@ -4,6 +4,7 @@ const stdx = @import("../stdx.zig");
 const assert = std.debug.assert;
 
 const SetAssociativeCache = @import("set_associative_cache.zig").SetAssociativeCache;
+const ScopeCloseMode = @import("tree.zig").ScopeCloseMode;
 
 /// A CacheMap is a hybrid between our SetAssociativeCache and a HashMap. The SetAssociativeCache
 /// sits on top and absorbs the majority of read / write requests. Below that, lives a HashMap.
@@ -41,11 +42,6 @@ pub fn CacheMap(
         load_factor,
     );
 
-    const OpKey = struct {
-        op: u64,
-        key: Key,
-    };
-
     return struct {
         const Self = @This();
 
@@ -59,10 +55,10 @@ pub fn CacheMap(
         scope_map: Map,
 
         op: u64 = 0,
-        op_keys: []OpKey,
-        op_keys_count: u64 = 0,
+        ops_keys: [3][]Key,
+        op_keys_count: [3]u64,
 
-        last_insert_caused_eviction: bool = undefined,
+        last_upsert_caused_eviction: bool = undefined,
 
         // TODO: Make these params a struct
         pub fn init(allocator: std.mem.Allocator, cache_value_count_max: u32, map_value_count_max: u32) !Self {
@@ -81,14 +77,21 @@ pub fn CacheMap(
             try scope_map.ensureTotalCapacity(allocator, map_value_count_max);
             errdefer scope_map.deinit(allocator);
 
-            var op_keys = try allocator.alloc(OpKey, map_value_count_max);
-            errdefer allocator.destroy(op_keys);
+            var ops_keys: [3][]Key = undefined;
+            var op_keys_count: [3]u64 = undefined;
+
+            for (ops_keys) |*op_keys, i| {
+                // TODO Sizing and freeing
+                op_keys.* = try allocator.alloc(Key, map_value_count_max);
+                op_keys_count[i] = 0;
+            }
 
             return Self{
                 .cache = cache,
                 .map = map,
                 .scope_map = scope_map,
-                .op_keys = op_keys,
+                .ops_keys = ops_keys,
+                .op_keys_count = op_keys_count,
             };
         }
 
@@ -96,7 +99,8 @@ pub fn CacheMap(
             self.map.deinit(allocator);
             self.scope_map.deinit(allocator);
             self.cache.deinit(allocator);
-            allocator.free(self.op_keys);
+            // TODO: Freeing for loop
+            // allocator.free(self.ops_keys);
         }
 
         // TODO: Profile me
@@ -110,9 +114,9 @@ pub fn CacheMap(
         }
 
         // TODO: Profile me
-        pub fn insert(self: *Self, value: *const Value) void {
-            self.last_insert_caused_eviction = false;
-            _ = self.cache.insert_index(value, on_eviction);
+        pub fn upsert(self: *Self, value: *const Value) void {
+            self.last_upsert_caused_eviction = false;
+            _ = self.cache.upsert_index(value, on_eviction);
 
             // When inserting into the cache, we have a few options, depending on if we evicted
             // something, and if we're running in a scope or not:
@@ -126,8 +130,8 @@ pub fn CacheMap(
             //    If we have an active scope, store a tombstone in our scope_map. If we don't have
             //    an active scope, we don't need to do anything.
 
-            if (self.scope_is_active and !self.last_insert_caused_eviction) {
-                _ = self.scope_map.getOrPutAssumeCapacity(tombstone_from_key(key_from_value(value)));
+            if (self.scope_is_active and !self.last_upsert_caused_eviction) {
+                _ = self.scope_map.putAssumeCapacity(tombstone_from_key(key_from_value(value)), {});
             }
         }
 
@@ -136,20 +140,20 @@ pub fn CacheMap(
             if (updated) {
                 // Case 1
                 if (self.scope_is_active) {
-                    _ = self.scope_map.getOrPutAssumeCapacity(value.*);
+                    _ = self.scope_map.putAssumeCapacity(value.*, {});
                 }
             } else {
                 // Case 2
                 if (self.scope_is_active) {
-                    _ = self.scope_map.getOrPutAssumeCapacity(value.*);
+                    _ = self.scope_map.putAssumeCapacity(value.*, {});
                 } else {
-                    var result = self.map.getOrPutAssumeCapacity(value.*);
+                    _ = self.map.putAssumeCapacity(value.*, {});
+                    var op_keys = self.ops_keys[self.op % self.ops_keys.len];
+                    var op_keys_count = self.op_keys_count[self.op % self.ops_keys.len];
 
-                    self.op_keys[self.op_keys_count] = .{
-                        .op = self.op,
-                        .key = key_from_value(result.key_ptr),
-                    };
-                    self.op_keys_count += 1;
+                    const key = key_from_value(value);
+                    op_keys[op_keys_count] = key;
+                    self.op_keys_count[self.op % self.ops_keys.len] += 1;
                 }
             }
         }
@@ -161,13 +165,13 @@ pub fn CacheMap(
 
             if (maybe_removed) |removed| {
                 if (self.scope_is_active) {
-                    _ = self.scope_map.getOrPutAssumeCapacity(removed);
+                    _ = self.scope_map.putAssumeCapacity(removed, {});
                 }
             } else {
                 if (self.scope_is_active) {
                     var maybe_map_removed = self.map.getKey(tombstone_from_key(key));
                     if (maybe_map_removed) |map_removed| {
-                        _ = self.scope_map.getOrPutAssumeCapacity(map_removed);
+                        _ = self.scope_map.putAssumeCapacity(map_removed, {});
                     }
                 }
 
@@ -182,7 +186,7 @@ pub fn CacheMap(
             self.scope_is_active = true;
         }
 
-        pub fn scope_close(self: *Self, data: enum {persist, discard}) void {
+        pub fn scope_close(self: *Self, data: ScopeCloseMode) void {
             assert(self.scope_is_active);
 
             // We don't need to do anything to persist a scope; we can just drop it
@@ -206,7 +210,7 @@ pub fn CacheMap(
                     self.remove(key_from_value(value));
                 } else {
                     // Reverting an update or delete consist of an insert to the original value
-                    self.insert(value);
+                    self.upsert(value);
                 }
             }
 
@@ -215,10 +219,23 @@ pub fn CacheMap(
 
         /// Remove any entries in our map that are older than `op`
         pub fn compact(self: *Self, op: u64) void {
-            for (self.op_keys[0..self.op_keys_count]) |*op_key| {
-                if (op_key.op >= op) continue;
-                _ = self.map.remove(tombstone_from_key(op_key.key));
+            var op_keys = self.ops_keys[op % self.ops_keys.len];
+            var op_keys_count = self.op_keys_count[self.op % self.ops_keys.len];
+
+            const prev_len = self.map.count();
+
+            var timer = std.time.Timer.start() catch unreachable;
+            timer.reset();
+
+            for (op_keys[0..op_keys_count]) |key| {
+                _ = self.map.remove(tombstone_from_key(key));
             }
+
+            const time = timer.read();
+
+            self.op_keys_count[self.op % self.ops_keys.len] = 0;
+
+            std.log.info("Finished cache_map compaction: from {} to {} - op {} - took {}us", .{ prev_len, self.map.count(), op, time / 1000 });
         }
     };
 }
@@ -305,30 +322,30 @@ test "cache_map: unit" {
     var cache_map = try TestCacheMap.init(allocator, 2048, 32);
     defer cache_map.deinit(allocator);
 
-    cache_map.insert(&.{ .key = 1, .value = 1, .tombstone = false });
+    cache_map.upsert(&.{ .key = 1, .value = 1, .tombstone = false });
     assert(std.meta.eql(cache_map.get(1).?.*, .{ .key = 1, .value = 1, .tombstone = false }));
 
     // Test scope persisting
     cache_map.scope_open();
-    cache_map.insert(&.{ .key = 2, .value = 2, .tombstone = false });
+    cache_map.upsert(&.{ .key = 2, .value = 2, .tombstone = false });
     assert(std.meta.eql(cache_map.get(2).?.*, .{ .key = 2, .value = 2, .tombstone = false }));
     cache_map.scope_close(.persist);
     assert(std.meta.eql(cache_map.get(2).?.*, .{ .key = 2, .value = 2, .tombstone = false }));
 
     // Test scope discard on updates
     cache_map.scope_open();
-    cache_map.insert(&.{ .key = 2, .value = 22, .tombstone = false });
-    cache_map.insert(&.{ .key = 2, .value = 222, .tombstone = false });
-    cache_map.insert(&.{ .key = 2, .value = 2222, .tombstone = false });
+    cache_map.upsert(&.{ .key = 2, .value = 22, .tombstone = false });
+    cache_map.upsert(&.{ .key = 2, .value = 222, .tombstone = false });
+    cache_map.upsert(&.{ .key = 2, .value = 2222, .tombstone = false });
     assert(std.meta.eql(cache_map.get(2).?.*, .{ .key = 2, .value = 2222, .tombstone = false }));
     cache_map.scope_close(.discard);
     assert(std.meta.eql(cache_map.get(2).?.*, .{ .key = 2, .value = 2, .tombstone = false }));
 
     // Test scope discard on inserts
     cache_map.scope_open();
-    cache_map.insert(&.{ .key = 3, .value = 3, .tombstone = false });
+    cache_map.upsert(&.{ .key = 3, .value = 3, .tombstone = false });
     assert(std.meta.eql(cache_map.get(3).?.*, .{ .key = 3, .value = 3, .tombstone = false }));
-    cache_map.insert(&.{ .key = 3, .value = 33, .tombstone = false });
+    cache_map.upsert(&.{ .key = 3, .value = 33, .tombstone = false });
     assert(std.meta.eql(cache_map.get(3).?.*, .{ .key = 3, .value = 33, .tombstone = false }));
     cache_map.scope_close(.discard);
     assert(!cache_map.has(3));

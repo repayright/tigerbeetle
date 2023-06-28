@@ -385,9 +385,14 @@ pub fn build(b: *std.build.Builder) void {
             .description = "Fuzz the ManifestLevel. Args: [--seed <seed>] [--events-max <count>]",
         },
         .{
-            .name = "fuzz_lsm_tree",
-            .file = "src/lsm/tree_fuzz.zig",
-            .description = "Fuzz the LSM tree. Args: [--seed <seed>] [--events-max <count>]",
+            .name = "fuzz_lsm_groove",
+            .file = "src/lsm/groove_fuzz.zig",
+            .description = "Fuzz the LSM groove. Args: [--seed <seed>] [--events-max <count>]",
+        },
+        .{
+            .name = "fuzz_lsm_table_memory",
+            .file = "src/lsm/table_memory_fuzz.zig",
+            .description = "Fuzz the LSM in memory table. Args: [--seed <seed>] [--events-max <count>]",
         },
         .{
             .name = "fuzz_lsm_segmented_array",
