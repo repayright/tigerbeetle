@@ -69,6 +69,7 @@ pub fn CacheMap(
             errdefer cache.deinit(allocator);
 
             var map: Map = .{};
+            // x2 for load factor
             try map.ensureTotalCapacity(allocator, map_value_count_max);
             errdefer map.deinit(allocator);
 
@@ -230,6 +231,7 @@ pub fn CacheMap(
             for (op_keys[0..op_keys_count]) |key| {
                 _ = self.map.remove(tombstone_from_key(key));
             }
+            self.map.clearRetainingCapacity();
 
             const time = timer.read();
 

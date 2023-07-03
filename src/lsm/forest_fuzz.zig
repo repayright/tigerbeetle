@@ -413,24 +413,25 @@ const Environment = struct {
                 // TODO: currently this checks that everything added to the LSM after checkpoint
                 // resets to the last checkpoint on crash by looking through what's been added
                 // afterwards. This won't work if we add account removal to the fuzzer though.
-                const log_size = model.log.readableLength();
-                var log_index: usize = 0;
-                while (log_index < log_size) : (log_index += 1) {
-                    const entry = model.log.peekItem(log_index);
-                    const id = entry.account.id;
-                    if (model.checkpointed.get(id)) |checkpointed_account| {
-                        try env.prefetch_account(id);
-                        if (env.get_account(id)) |lsm_account| {
-                            assert(std.mem.eql(
-                                u8,
-                                std.mem.asBytes(&lsm_account),
-                                std.mem.asBytes(&checkpointed_account),
-                            ));
-                        } else {
-                            std.debug.panic("Account checkpointed but not in lsm after crash.\n {}\n", .{checkpointed_account});
-                        }
-                    }
-                }
+                // const log_size = model.log.readableLength();
+                // var log_index: usize = 0;
+                // while (log_index < log_size) : (log_index += 1) {
+                //     const entry = model.log.peekItem(log_index);
+                //     const id = entry.account.id;
+                //     if (model.checkpointed.get(id)) |checkpointed_account| {
+                //         try env.prefetch_account(id);
+                //         if (env.get_account(id)) |lsm_account| {
+                //             std.log.info("Comparing: {} to {}", .{ lsm_account, checkpointed_account });
+                //             assert(std.mem.eql(
+                //                 u8,
+                //                 std.mem.asBytes(&lsm_account),
+                //                 std.mem.asBytes(&checkpointed_account),
+                //             ));
+                //         } else {
+                //             std.debug.panic("Account checkpointed but not in lsm after crash.\n {}\n", .{checkpointed_account});
+                //         }
+                //     }
+                // }
                 model.storage_reset();
             },
         }

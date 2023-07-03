@@ -854,11 +854,6 @@ pub fn GrooveType(
 
                 // Only update the indexes that change.
                 if (!std.meta.eql(old_index, new_index)) {
-                    if (old_index) |index| {
-                        const old_index_value = Helper.derive_value(old, index);
-                        @field(groove.indexes, field.name).remove(&old_index_value);
-                    }
-
                     if (new_index) |index| {
                         const new_index_value = Helper.derive_value(new, index);
                         @field(groove.indexes, field.name).put(&new_index_value);

@@ -316,7 +316,7 @@ pub fn SetAssociativeCache(
             self.counts.set(set.offset + way, 1);
             self.clocks.set(clock_index, way +% 1);
 
-            return set.offset;
+            return set.offset + way;
         }
 
         const Set = struct {
