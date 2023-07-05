@@ -16,6 +16,14 @@ const tracer = vsr.tracer;
 const cli = @import("cli.zig");
 const fatal = cli.fatal;
 
+const benchmark = vsr.benchmark;
+const Benchmark = benchmark.Benchmark;
+const Client = benchmark.Client;
+const account_count_per_batch = benchmark.account_count_per_batch;
+const transfer_count_per_batch = benchmark.transfer_count_per_batch;
+const tb = benchmark.tb;
+const StatsD = benchmark.StatsD;
+
 const IO = vsr.io.IO;
 const Time = vsr.time.Time;
 const Storage = vsr.storage.Storage;
@@ -53,6 +61,7 @@ pub fn main() !void {
             .replica_count = args.replica_count,
         }, args.path),
         .start => |*args| try Command.start(&arena, args),
+        .benchmark => |*args| try Command.benchmark(allocator, args),
         .version => |*args| try Command.version(allocator, args.verbose),
     }
 }
@@ -222,6 +231,125 @@ const Command = struct {
         while (true) {
             replica.tick();
             try command.io.run_for_ns(constants.tick_ms * std.time.ns_per_ms);
+        }
+    }
+
+    pub fn benchmark(allocator: mem.Allocator, args: *const cli.Command.Benchmark) !void {
+        var child: ?*std.ChildProcess = null;
+
+        if (args.addresses == null) {
+            // Spin up a local cluster
+            // TODO - make this filename random...
+            try format(allocator, .{
+                .cluster = 0,
+                .replica = 0,
+                .replica_count = 1,
+            }, "tigerbeetle_benchmark");
+
+            // We exec ourselves in the background, running `tigerbeetle start`, rather than
+            // trying to mess around with threads or calling start() directly.
+            // TODO: Need to lookup path to self rather than relying on ./ and hardcoded name!
+            const argv = .{ "./tigerbeetle", "start", "--addresses=127.0.0.1:5000", "tigerbeetle_benchmark" };
+            child = try std.ChildProcess.init(&argv, allocator);
+            child.?.stdin_behavior = .Ignore;
+            child.?.stdout_behavior = .Inherit;
+            child.?.stderr_behavior = .Inherit;
+
+            try child.?.spawn();
+        }
+
+        defer if (child != null) {
+            _ = child.?.kill() catch @panic("error killing child");
+            child.?.deinit();
+        };
+
+        const stderr = std.io.getStdErr().writer();
+
+        if (builtin.mode != .ReleaseSafe and builtin.mode != .ReleaseFast) {
+            try stderr.print("Benchmark must be built as ReleaseSafe for reasonable results.\n", .{});
+        }
+
+        var account_count: usize = 10_000;
+        var transfer_count: usize = 10_000_000;
+        var transfer_count_per_second: usize = 1_000_000;
+        var print_batch_timings = false;
+        var enable_statsd = false;
+
+        var addresses = try allocator.alloc(std.net.Address, 1);
+        addresses[0] = try std.net.Address.parseIp4("127.0.0.1", 5000);
+
+        // This will either free the above address alloc, or parse_arg_addresses will
+        // free and re-alloc internally and this will free that.
+        defer allocator.free(addresses);
+
+        if (account_count < 2) std.debug.panic("Need at least two acconts, got {}", .{account_count});
+
+        const transfer_arrival_rate_ns = @divTrunc(
+            std.time.ns_per_s,
+            transfer_count_per_second,
+        );
+
+        const client_id = std.crypto.random.int(u128);
+        const cluster_id: u32 = 0;
+
+        var io = try IO.init(32, 0);
+
+        var message_pool = try MessagePool.init(allocator, .client);
+
+        std.log.info("Benchmark running against {any}", .{addresses});
+
+        var client = try Client.init(
+            allocator,
+            client_id,
+            cluster_id,
+            @intCast(u8, addresses.len),
+            &message_pool,
+            .{
+                .configuration = addresses,
+                .io = &io,
+            },
+        );
+
+        var benchmark_client = Benchmark{
+            .io = &io,
+            .message_pool = &message_pool,
+            .client = &client,
+            .batch_accounts = try std.ArrayList(tb.Account).initCapacity(allocator, account_count_per_batch),
+            .account_count = account_count,
+            .account_index = 0,
+            .rng = std.rand.DefaultPrng.init(42),
+            .timer = try std.time.Timer.start(),
+            .batch_latency_ns = try std.ArrayList(u64).initCapacity(allocator, transfer_count),
+            .transfer_latency_ns = try std.ArrayList(u64).initCapacity(allocator, transfer_count),
+            .batch_transfers = try std.ArrayList(tb.Transfer).initCapacity(allocator, transfer_count_per_batch),
+            .batch_start_ns = 0,
+            .tranfer_index = 0,
+            .transfer_count = transfer_count,
+            .transfer_count_per_second = transfer_count_per_second,
+            .transfer_arrival_rate_ns = transfer_arrival_rate_ns,
+            .transfer_start_ns = try std.ArrayList(u64).initCapacity(allocator, transfer_count_per_batch),
+            .batch_index = 0,
+            .transfers_sent = 0,
+            .transfer_index = 0,
+            .transfer_next_arrival_ns = 0,
+            .message = null,
+            .callback = null,
+            .done = false,
+            .statsd = if (enable_statsd) &try StatsD.init(
+                allocator,
+                &io,
+                std.net.Address.parseIp4("127.0.0.1", 8125) catch unreachable,
+            ) else null,
+            .print_batch_timings = print_batch_timings,
+        };
+
+        defer if (enable_statsd) benchmark_client.statsd.?.deinit(allocator);
+
+        benchmark_client.create_accounts();
+
+        while (!benchmark_client.done) {
+            benchmark_client.client.tick();
+            try benchmark_client.io.run_for_ns(constants.tick_ms * std.time.ns_per_ms);
         }
     }
 

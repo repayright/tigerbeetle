@@ -30,6 +30,7 @@ pub const lsm = .{
 pub const testing = .{
     .cluster = @import("testing/cluster.zig"),
 };
+pub const benchmark = @import("benchmark.zig");
 
 pub const ReplicaType = @import("vsr/replica.zig").ReplicaType;
 pub const format = @import("vsr/replica_format.zig").format;

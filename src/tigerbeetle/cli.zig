@@ -28,17 +28,24 @@ const usage = fmt.comptimePrint(
     \\
     \\  tigerbeetle start --addresses=<addresses> [--cache-grid=<size><KB|MB|GB>] <path>
     \\
+    \\  tigerbeetle benchmark [--addresses=<addresses>] [--account-count=<count>] [--transfer-count=<count>]
+    \\                                                  [--transfer-count-per-second=<tps>]
+    \\                                                  [--verbose] [--statsd]
+    \\
     \\  tigerbeetle version [--version]
     \\
     \\Commands:
     \\
-    \\  format   Create a TigerBeetle replica data file at <path>.
-    \\           The --cluster and --replica arguments are required.
-    \\           Each TigerBeetle replica must have its own data file.
+    \\  format     Create a TigerBeetle replica data file at <path>.
+    \\             The --cluster and --replica arguments are required.
+    \\             Each TigerBeetle replica must have its own data file.
     \\
-    \\  start    Run a TigerBeetle replica from the data file at <path>.
+    \\  start      Run a TigerBeetle replica from the data file at <path>.
     \\
-    \\  version  Print the TigerBeetle build version and the compile-time config values.
+    \\  benchmark  Benchmark a TigerBeetle cluster. If --addresses is not specified,
+    \\             a local ephemeral replica will be spun up.
+    \\
+    \\  version    Print the TigerBeetle build version and the compile-time config values.
     \\
     \\Options:
     \\
@@ -86,6 +93,8 @@ const usage = fmt.comptimePrint(
     \\
     \\  tigerbeetle start --addresses=192.168.0.1,192.168.0.2,192.168.0.3 0_0.tigerbeetle
     \\
+    \\  tigerbeetle benchmark
+    \\
     \\  tigerbeetle version --verbose
     \\
 , .{
@@ -104,6 +113,15 @@ pub const Command = union(enum) {
         cache_grid_blocks: u32,
         path: [:0]const u8,
     };
+    pub const Benchmark = struct {
+        args_allocated: std.ArrayList([:0]const u8),
+        addresses: ?[]net.Address,
+        account_count: u64,
+        transfer_count: u64,
+        transfer_count_per_second: u64,
+        verbose: bool,
+        statsd: bool,
+    };
 
     format: struct {
         args_allocated: std.ArrayList([:0]const u8),
@@ -113,6 +131,7 @@ pub const Command = union(enum) {
         path: [:0]const u8,
     },
     start: Start,
+    benchmark: Benchmark,
     version: struct {
         verbose: bool,
     },
@@ -121,6 +140,7 @@ pub const Command = union(enum) {
         var args_allocated = switch (command) {
             .format => |cmd| cmd.args_allocated,
             .start => |cmd| cmd.args_allocated,
+            .benchmark => |cmd| cmd.args_allocated,
             .version => return,
         };
 
@@ -164,7 +184,7 @@ pub fn parse_args(allocator: std.mem.Allocator) !Command {
         os.exit(0);
     }
     const command = meta.stringToEnum(meta.Tag(Command), raw_command) orelse
-        fatal("unknown command '{s}', expected 'start', 'format', or 'version'", .{raw_command});
+        fatal("unknown command '{s}', expected 'start', 'format', 'benchmark' or 'version'", .{raw_command});
 
     while (args.next(allocator)) |parsed_arg| {
         const arg = try parsed_arg;
@@ -180,7 +200,7 @@ pub fn parse_args(allocator: std.mem.Allocator) !Command {
             if (command != .format) fatal("--replica: supported only by 'format' command", .{});
             replica = parse_flag("--replica", arg);
         } else if (mem.startsWith(u8, arg, "--addresses")) {
-            if (command != .start) fatal("--addresses: supported only by 'start' command", .{});
+            if (command != .start and command != .benchmark) fatal("--addresses: supported only by 'start' and 'benchmark' commands", .{});
             addresses = parse_flag("--addresses", arg);
         } else if (mem.startsWith(u8, arg, "--cache-accounts")) {
             if (command != .start) fatal("--cache-accounts: supported only by 'start' command", .{});
@@ -198,7 +218,7 @@ pub fn parse_args(allocator: std.mem.Allocator) !Command {
             if (command != .start) fatal("--cache-grid: supported only by 'start' command", .{});
             cache_grid = parse_flag("--cache-grid", arg);
         } else if (mem.eql(u8, arg, "--verbose")) {
-            if (command != .version) fatal("--verbose: supported only by 'version' command", .{});
+            if (command != .version) fatal("--verbose: supported only by 'benchmark' and 'version' commands", .{});
             verbose = true;
         } else if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
             std.io.getStdOut().writeAll(usage) catch os.exit(1);
@@ -277,6 +297,17 @@ pub fn parse_args(allocator: std.mem.Allocator) !Command {
                     .path = path orelse fatal("required: <path>", .{}),
                 },
             };
+        },
+        .benchmark => {
+            return Command{ .benchmark = .{
+                .args_allocated = args_allocated,
+                .addresses = null,
+                .account_count = 123,
+                .transfer_count = 123,
+                .transfer_count_per_second = 123,
+                .verbose = true,
+                .statsd = false,
+            } };
         },
     }
 }
