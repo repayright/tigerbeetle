@@ -121,7 +121,6 @@ comptime {
 fn IndexTreeType(
     comptime Storage: type,
     comptime Field: type,
-    comptime tree_name: [:0]const u8,
     comptime value_count_max: usize,
 ) type {
     const Key = CompositeKey(IndexCompositeKeyType(Field));
@@ -137,7 +136,7 @@ fn IndexTreeType(
         .secondary_index,
     );
 
-    return TreeType(Table, Storage, tree_name);
+    return TreeType(Table, Storage);
 }
 
 /// A Groove is a collection of LSM trees auto generated for fields on a struct type
@@ -149,6 +148,10 @@ pub fn GrooveType(
     comptime Storage: type,
     comptime Object: type,
     /// An anonymous struct instance which contains the following:
+    ///
+    /// - ids: { .tree = u128 }:
+    ///     An anonymous struct which maps each of the groove's trees to a stable, forest-unique,
+    ///     tree identifier.
     ///
     /// - value_count_max: { .field = usize }:
     ///     An anonymous struct which contains, for each field of `Object`,
@@ -189,11 +192,9 @@ pub fn GrooveType(
         }
 
         if (!ignored) {
-            const tree_name = @typeName(Object) ++ "." ++ field.name;
             const IndexTree = IndexTreeType(
                 Storage,
                 field.field_type,
-                tree_name,
                 @field(groove_options.value_count_max, field.name),
             );
             index_fields = index_fields ++ [_]std.builtin.TypeInfo.StructField{
@@ -235,12 +236,7 @@ pub fn GrooveType(
         // Create an IndexTree for the DerivedType:
         const tree_name = @typeName(Object) ++ "." ++ field.name;
         const DerivedType = @typeInfo(derive_return_type).Optional.child;
-        const IndexTree = IndexTreeType(
-            Storage,
-            DerivedType,
-            tree_name,
-            @field(groove_options.value_count_max, field.name),
-        );
+        const IndexTree = IndexTreeType(Storage, DerivedType, tree_name);
 
         index_fields = index_fields ++ &.{
             .{
@@ -279,9 +275,7 @@ pub fn GrooveType(
             groove_options.value_count_max.timestamp,
             .general,
         );
-
-        const tree_name = @typeName(Object);
-        break :blk TreeType(Table, Storage, tree_name);
+        break :blk TreeType(Table, Storage);
     };
 
     const _IdTree = if (!has_id) void else blk: {
@@ -296,9 +290,7 @@ pub fn GrooveType(
             groove_options.value_count_max.id,
             .general,
         );
-
-        const tree_name = @typeName(Object) ++ ".id";
-        break :blk TreeType(Table, Storage, tree_name);
+        break :blk TreeType(Table, Storage);
     };
 
     const _IndexTrees = @Type(.{
@@ -317,21 +309,6 @@ pub fn GrooveType(
             .is_tuple = false,
         },
     });
-
-    // Verify no hash collisions between all the trees:
-    comptime var hashes: []const u128 = &.{_ObjectTree.hash};
-
-    if (has_id) {
-        const hash: []const u128 = &.{_IdTree.hash};
-        assert(std.mem.indexOf(u128, hashes, hash) == null);
-        hashes = hashes ++ hash;
-    }
-    inline for (std.meta.fields(_IndexTrees)) |field| {
-        const IndexTree = @TypeOf(@field(@as(_IndexTrees, undefined), field.name));
-        const hash: []const u128 = &.{IndexTree.hash};
-        assert(std.mem.indexOf(u128, hashes, hash) == null);
-        hashes = hashes ++ hash;
-    }
 
     // Verify groove index count:
     const indexes_count_actual = std.meta.fields(_IndexTrees).len;
@@ -461,6 +438,7 @@ pub fn GrooveType(
         pub const IdTree = _IdTree;
         pub const IndexTrees = _IndexTrees;
         pub const ObjectsCache = _ObjectsCache;
+        pub const config = groove_options;
 
         const Grid = GridType(Storage);
 
@@ -521,24 +499,14 @@ pub fn GrooveType(
             grid: *Grid,
             options: Options,
         ) !Groove {
-            assert(options.cache_entries_max > 0);
-            var objects_cache = try allocator.create(ObjectsCache);
-            errdefer allocator.destroy(objects_cache);
-
-            objects_cache.* = try ObjectsCache.init(
-                allocator,
-                options.cache_entries_max,
-
-                // TODO: Sizing here
-                options.prefetch_entries_max * 2,
-            );
-            errdefer objects_cache.deinit(allocator);
-
-            // Intialize the object LSM tree.
             var object_tree = try ObjectTree.init(
                 allocator,
                 node_pool,
                 grid,
+                .{
+                    .id = @field(groove_options.ids, "timestamp"),
+                    .name = @typeName(Object),
+                },
                 options.tree_options_object,
             );
             errdefer object_tree.deinit(allocator);
@@ -547,6 +515,10 @@ pub fn GrooveType(
                 allocator,
                 node_pool,
                 grid,
+                .{
+                    .id = @field(groove_options.ids, "id"),
+                    .name = @typeName(Object) ++ ".id",
+                },
                 options.tree_options_id,
             ));
             errdefer if (has_id) id_tree.deinit(allocator);
@@ -567,6 +539,10 @@ pub fn GrooveType(
                     allocator,
                     node_pool,
                     grid,
+                    .{
+                        .id = @field(groove_options.ids, field.name),
+                        .name = @typeName(Object) ++ "." ++ field.name,
+                    },
                     @field(options.tree_options_index, field.name),
                 );
                 index_trees_initialized += 1;
@@ -604,6 +580,26 @@ pub fn GrooveType(
             groove.* = undefined;
         }
 
+        pub fn reset(groove: *Groove) void {
+            inline for (std.meta.fields(IndexTrees)) |field| {
+                @field(groove.indexes, field.name).reset();
+            }
+            groove.objects.reset();
+            if (has_id) groove.ids.reset();
+
+            groove.prefetch_ids.clearRetainingCapacity();
+            groove.prefetch_objects.clearRetainingCapacity();
+
+            groove.* = .{
+                .objects = groove.objects,
+                .ids = groove.ids,
+                .indexes = groove.indexes,
+                .prefetch_ids = groove.prefetch_ids,
+                .prefetch_objects = groove.prefetch_objects,
+                .prefetch_snapshot = null,
+            };
+        }
+
         pub fn get(groove: *const Groove, key: PrimaryKey) ?*const Object {
             return groove.objects_cache.get(key);
         }
@@ -614,8 +610,8 @@ pub fn GrooveType(
             // We may query the input tables of an ongoing compaction, but must not query the
             // output tables until the compaction is complete. (Until then, the output tables may
             // be in the manifest but not yet on disk).
-            const snapshot_max = groove.objects.lookup_snapshot_max;
-            assert(!has_id or snapshot_max == groove.ids.lookup_snapshot_max);
+            const snapshot_max = groove.objects.lookup_snapshot_max.?;
+            assert(!has_id or snapshot_max == groove.ids.lookup_snapshot_max.?);
 
             const snapshot_target = snapshot orelse snapshot_max;
             assert(snapshot_target <= snapshot_max);
@@ -793,9 +789,14 @@ pub fn GrooveType(
                 const worker = LookupContext.parent(completion);
                 worker.lookup = undefined;
 
-                // The result must be non-null as we keep the ID (if any) and Object trees in sync.
-                const object = result.?;
-                assert(!ObjectTreeHelpers(Object).tombstone(object));
+                if (result) |object| {
+                    assert(!ObjectTreeHelpers(Object).tombstone(object));
+                    worker.context.groove.prefetch_objects.putAssumeCapacityNoClobber(object.*, {});
+                } else {
+                    // When there is an id tree, the result must be non-null,
+                    // as we keep the ID and Object trees in sync.
+                    assert(!has_id);
+                }
 
                 worker.context.groove.objects_cache.upsert(object);
                 worker.lookup_start_next();
@@ -1048,6 +1049,17 @@ test "Groove" {
         Storage,
         Transfer,
         .{
+            .ids = .{
+                .timestamp = 1,
+                .id = 2,
+                .debit_account_id = 3,
+                .credit_account_id = 4,
+                .pending_id = 5,
+                .timeout = 6,
+                .ledger = 7,
+                .code = 8,
+                .amount = 9,
+            },
             // Doesn't matter for this test.
             .value_count_max = .{
                 .timestamp = 1,

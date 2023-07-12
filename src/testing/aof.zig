@@ -1,5 +1,6 @@
 const std = @import("std");
 const assert = std.debug.assert;
+const maybe = stdx.maybe;
 
 const stdx = @import("../stdx.zig");
 const constants = @import("../constants.zig");
@@ -62,7 +63,7 @@ pub const AOF = struct {
         self.validation_checksums.deinit();
     }
 
-    pub fn validate(self: *AOF, last_checksum: u128) !void {
+    pub fn validate(self: *AOF, last_checksum: ?u128) !void {
         self.validation_checksums.clearAndFree();
 
         var it = self.iterator();
@@ -85,7 +86,8 @@ pub const AOF = struct {
                 // different method to walk down AOF entries).
                 try self.validation_checksums.put(header.parent, {});
             } else {
-                assert(self.validation_checksums.get(header.parent) != null);
+                // (Null due to state sync skipping commits.)
+                maybe(self.validation_checksums.get(header.parent) == null);
             }
 
             try self.validation_checksums.put(header.checksum, {});
@@ -93,11 +95,14 @@ pub const AOF = struct {
             last_entry = entry;
         }
 
-        if (last_entry.?.header().checksum != last_checksum) {
-            return error.ChecksumMismatch;
+        if (last_checksum) |checksum| {
+            if (last_entry.?.header().checksum != checksum) {
+                return error.ChecksumMismatch;
+            }
+            log.debug("validated all aof entries. last entry checksum {} matches supplied {}", .{ last_entry.?.header().checksum, checksum });
+        } else {
+            log.debug("validated present aof entries.", .{});
         }
-
-        log.debug("validated all aof entries. last entry checksum {} matches supplied {}", .{ last_entry.?.header().checksum, last_checksum });
     }
 
     pub fn write(self: *AOF, message: *const Message, options: struct { replica: u8, primary: u8 }) !void {

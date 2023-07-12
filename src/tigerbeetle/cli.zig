@@ -237,6 +237,11 @@ pub fn parse_args(allocator: std.mem.Allocator) !Command {
             };
         },
         .start => {
+            // const groove_config = StateMachine.Forest.groove_config;
+            // const AccountsValuesCache = groove_config.accounts_mutable.ObjectTree.TableMutable.ValuesCache;
+            // const TransfersValuesCache = groove_config.transfers.ObjectTree.TableMutable.ValuesCache;
+            // const PostedValuesCache = groove_config.posted.ObjectTree.TableMutable.ValuesCache;
+
             return Command{
                 .start = .{
                     .args_allocated = args_allocated,

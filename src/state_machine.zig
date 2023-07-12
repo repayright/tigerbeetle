@@ -62,6 +62,41 @@ pub fn StateMachineType(
                     ));
                 }
             };
+
+            pub const tree_ids = struct {
+                pub const accounts_immutable = .{
+                    .timestamp = 1,
+                    .id = 2,
+                    .user_data = 3,
+                    .ledger = 4,
+                    .code = 5,
+                };
+
+                pub const accounts_mutable = .{
+                    .timestamp = 6,
+                    .debits_pending = 7,
+                    .debits_posted = 8,
+                    .credits_pending = 9,
+                    .credits_posted = 10,
+                };
+
+                pub const transfers = .{
+                    .timestamp = 11,
+                    .id = 12,
+                    .debit_account_id = 13,
+                    .credit_account_id = 14,
+                    .user_data = 15,
+                    .pending_id = 16,
+                    .timeout = 17,
+                    .ledger = 18,
+                    .code = 19,
+                    .amount = 20,
+                };
+
+                pub const posted = .{
+                    .timestamp = 21,
+                };
+            };
         };
 
         pub const AccountImmutable = extern struct {
@@ -137,6 +172,7 @@ pub fn StateMachineType(
             Storage,
             AccountImmutable,
             .{
+                .ids = constants.tree_ids.accounts_immutable,
                 .value_count_max = .{
                     .timestamp = config.lsm_batch_multiple * math.max(
                         constants.batch_max.create_accounts,
@@ -157,6 +193,7 @@ pub fn StateMachineType(
             Storage,
             AccountMutable,
             .{
+                .ids = constants.tree_ids.accounts_mutable,
                 .value_count_max = .{
                     .timestamp = config.lsm_batch_multiple * math.max(
                         constants.batch_max.create_accounts,
@@ -195,6 +232,7 @@ pub fn StateMachineType(
             Storage,
             Transfer,
             .{
+                .ids = constants.tree_ids.transfers,
                 .value_count_max = .{
                     .timestamp = config.lsm_batch_multiple * constants.batch_max.create_transfers,
                     .id = config.lsm_batch_multiple * constants.batch_max.create_transfers,
@@ -212,11 +250,34 @@ pub fn StateMachineType(
             },
         );
 
-        // TODO Disabled for now pending groove unification
-        // const PostedGroove = @import("lsm/posted_groove.zig").PostedGrooveType(
-        //     Storage,
-        //     config.lsm_batch_multiple * constants.batch_max.create_transfers,
-        // );
+        const PostedGroove = GrooveType(
+            Storage,
+            PostedGrooveValue,
+            .{
+                .ids = constants.tree_ids.posted,
+                .value_count_max = .{
+                    .timestamp = config.lsm_batch_multiple * constants.batch_max.create_transfers,
+                    .fulfillment = config.lsm_batch_multiple * constants.batch_max.create_transfers,
+                },
+                .ignored = &[_][]const u8{ "fulfillment", "padding" },
+                .derived = .{},
+            },
+        );
+
+        const PostedGrooveValue = extern struct {
+            timestamp: u64,
+            fulfillment: enum(u8) {
+                posted = 0,
+                voided = 1,
+            },
+            padding: [7]u8,
+
+            comptime {
+                // Assert that there is no implicit padding.
+                assert(@sizeOf(PostedGrooveValue) == 16);
+                assert(@bitSizeOf(PostedGrooveValue) == 16 * 8);
+            }
+        };
 
         pub const Workload = WorkloadType(StateMachine);
 
@@ -228,11 +289,6 @@ pub fn StateMachineType(
         });
 
         pub const Operation = enum(u8) {
-            /// Operations reserved by VR protocol (for all state machines):
-            reserved = 0,
-            root = 1,
-            register = 2,
-
             /// Operations exported by TigerBeetle:
             create_accounts = config.vsr_operations_reserved + 0,
             create_transfers = config.vsr_operations_reserved + 1,
@@ -288,7 +344,7 @@ pub fn StateMachineType(
         hack_time2: u64 = 0,
         hack_time3: u64 = 0,
 
-        tracer_slot: ?tracer.SpanStart,
+        tracer_slot: ?tracer.SpanStart = null,
 
         pub fn init(allocator: mem.Allocator, grid: *Grid, options: Options) !StateMachine {
             var forest = try Forest.init(
@@ -303,7 +359,6 @@ pub fn StateMachineType(
                 .prepare_timestamp = 0,
                 .commit_timestamp = 0,
                 .forest = forest,
-                .tracer_slot = null,
             };
         }
 
@@ -313,13 +368,27 @@ pub fn StateMachineType(
             self.forest.deinit(allocator);
         }
 
+        // TODO Reset here and in LSM should clean up (i.e. end) tracer spans.
+        // tracer.end() requires an event be passed in. We will need an additional tracer.end
+        // function that doesn't require the explicit event be passed in. The Trace should store the
+        // event so that it knows what event should be ending during reset() (and deinit(), maybe).
+        // Then the original tracer.end() can assert that the two events match.
+        pub fn reset(self: *StateMachine) void {
+            self.forest.reset();
+
+            self.* = .{
+                .prepare_timestamp = 0,
+                .commit_timestamp = 0,
+                .forest = self.forest,
+            };
+        }
+
         pub fn Event(comptime operation: Operation) type {
             return switch (operation) {
                 .create_accounts => Account,
                 .create_transfers => Transfer,
                 .lookup_accounts => u128,
                 .lookup_transfers => u128,
-                else => unreachable,
             };
         }
 
@@ -329,7 +398,6 @@ pub fn StateMachineType(
                 .create_transfers => CreateTransfersResult,
                 .lookup_accounts => Account,
                 .lookup_transfers => Transfer,
-                else => unreachable,
             };
         }
 
@@ -349,18 +417,14 @@ pub fn StateMachineType(
             callback(self);
         }
 
-        /// Returns the header's timestamp.
-        pub fn prepare(self: *StateMachine, operation: Operation, input: []u8) u64 {
-            switch (operation) {
-                .reserved => unreachable,
-                .root => unreachable,
-                .register => {},
-                .create_accounts => self.prepare_timestamp += mem.bytesAsSlice(Account, input).len,
-                .create_transfers => self.prepare_timestamp += mem.bytesAsSlice(Transfer, input).len,
-                .lookup_accounts => {},
-                .lookup_transfers => {},
-            }
-            return self.prepare_timestamp;
+        /// Updates `prepare_timestamp` to the highest timestamp of the response.
+        pub fn prepare(self: *StateMachine, operation: Operation, input: []align(16) u8) void {
+            self.prepare_timestamp += switch (operation) {
+                .create_accounts => mem.bytesAsSlice(Account, input).len,
+                .create_transfers => mem.bytesAsSlice(Transfer, input).len,
+                .lookup_accounts => 0,
+                .lookup_transfers => 0,
+            };
         }
 
         pub fn prefetch(
@@ -373,13 +437,6 @@ pub fn StateMachineType(
             _ = op;
             assert(self.prefetch_input == null);
             assert(self.prefetch_callback == null);
-
-            // NOTE: prefetch(.register)'s callback should end up calling commit()
-            // (which is always async) instead of recursing, so this inline callback is fine.
-            if (operation == .register) {
-                callback(self);
-                return;
-            }
 
             tracer.start(
                 &self.tracer_slot,
@@ -397,7 +454,6 @@ pub fn StateMachineType(
             // self.forest.grooves.posted.prefetch_setup(null);
 
             return switch (operation) {
-                .reserved, .root, .register => unreachable,
                 .create_accounts => {
                     self.prefetch_create_accounts(mem.bytesAsSlice(Account, input));
                 },
@@ -466,10 +522,6 @@ pub fn StateMachineType(
 
                 if (t.flags.post_pending_transfer or t.flags.void_pending_transfer) {
                     self.forest.grooves.transfers.prefetch_enqueue(t.pending_id, .positive_lookup);
-                    // This prefetch isn't run yet, but enqueue it here as well to save an extra
-                    // iteration over transfers.
-                    // TODO
-                    // self.forest.grooves.posted.prefetch_enqueue(t.pending_id);
                 }
             }
 
@@ -514,6 +566,10 @@ pub fn StateMachineType(
                         if (self.forest.grooves.accounts_immutable.get(p.credit_account_id)) |cr_immut| {
                             self.forest.grooves.accounts_mutable.prefetch_enqueue(cr_immut.timestamp, .positive_lookup);
                         }
+
+                        // This prefetch isn't run yet, but enqueue it here as well to save an extra
+                        // iteration over transfers.
+                        self.forest.grooves.posted.prefetch_enqueue(p.timestamp);
                     }
                 } else {
                     if (self.forest.grooves.accounts_immutable.get(t.debit_account_id)) |dr_immut| {
@@ -622,13 +678,10 @@ pub fn StateMachineType(
             self.hack_time2 = 0;
             self.hack_time3 = 0;
             const result = switch (operation) {
-                .root => unreachable,
-                .register => 0,
                 .create_accounts => self.execute(.create_accounts, timestamp, input, output),
                 .create_transfers => self.execute(.create_transfers, timestamp, input, output),
                 .lookup_accounts => self.execute_lookup_accounts(input, output),
                 .lookup_transfers => self.execute_lookup_transfers(input, output),
-                else => unreachable,
             };
             std.log.info("Took {}ms to run groove ops 1", .{self.hack_time1 / 1000 / 1000});
             std.log.info("Took {}ms to run groove ops 2", .{self.hack_time2 / 1000 / 1000});
@@ -1078,9 +1131,11 @@ pub fn StateMachineType(
 
             if (self.get_transfer(t.id)) |e| return post_or_void_pending_transfer_exists(t, e, p);
 
-            if (self.get_posted(t.pending_id)) |posted| {
-                if (posted) return .pending_transfer_already_posted;
-                return .pending_transfer_already_voided;
+            if (self.get_posted(p.timestamp)) |posted| {
+                switch (posted.fulfillment) {
+                    .posted => return .pending_transfer_already_posted,
+                    .voided => return .pending_transfer_already_voided,
+                }
             }
 
             assert(p.timestamp < t.timestamp);
@@ -1105,6 +1160,15 @@ pub fn StateMachineType(
 
             // TODO
             // self.forest.grooves.posted.insert(t.pending_id, t.flags.post_pending_transfer);
+            // self.forest.grooves.posted.put_no_clobber(&PostedGrooveValue{
+            //     .timestamp = p.timestamp,
+            //     .fulfillment = fulfillment: {
+            //         if (t.flags.post_pending_transfer) break :fulfillment .posted;
+            //         if (t.flags.void_pending_transfer) break :fulfillment .voided;
+            //         unreachable;
+            //     },
+            //     .padding = [_]u8{0} ** 7,
+            // });
 
             var dr_mut_new = self.forest.grooves.accounts_mutable.get(dr_immut.timestamp).?.*;
             var cr_mut_new = self.forest.grooves.accounts_mutable.get(cr_immut.timestamp).?.*;
@@ -1186,12 +1250,11 @@ pub fn StateMachineType(
         }
 
         /// Returns whether a pending transfer, if it exists, has already been posted or voided.
-        fn get_posted(self: *const StateMachine, pending_id: u128) ?bool {
-            _ = self;
-            // TODO
-            _ = pending_id;
-            return null;
-            // return self.forest.grooves.posted.get(pending_id);
+        fn get_posted(
+            self: *const StateMachine,
+            pending_timestamp: u64,
+        ) ?*const PostedGrooveValue {
+            return self.forest.grooves.posted.get(pending_timestamp);
         }
 
         pub fn forest_options(options: Options) Forest.GroovesOptions {
@@ -1232,7 +1295,7 @@ pub fn StateMachineType(
                     .tree_options_object = .{
                         .object_tree = true,
                     },
-                    .tree_options_id = .{},
+                    .tree_options_id = {}, // No ID tree as there's one already for AccountsImmutable.
                     .tree_options_index = .{
                         .debits_pending = .{},
                         .debits_posted = .{},
@@ -1259,11 +1322,14 @@ pub fn StateMachineType(
                         .amount = .{},
                     },
                 },
-                // TODO
-                // .posted = .{
-                //     .cache_entries_max = options.cache_entries_posted,
-                //     .prefetch_entries_max = batch_transfers_max,
-                // },
+                .posted = .{
+                    .prefetch_entries_max = batch_transfers_max,
+                    .tree_options_object = .{
+                        .cache_entries_max = options.cache_entries_posted,
+                    },
+                    .tree_options_id = {},
+                    .tree_options_index = .{},
+                },
             };
         }
     };
@@ -1625,7 +1691,8 @@ fn check(comptime test_table: []const u8) !void {
                 assert(operation == null or operation.? == commit_operation);
 
                 context.state_machine.prepare_timestamp += 1;
-                const timestamp = context.state_machine.prepare(commit_operation, request.items);
+                context.state_machine.prepare(commit_operation, request.items);
+                const timestamp = context.state_machine.prepare_timestamp;
 
                 const reply_actual_buffer = try allocator.alignedAlloc(u8, 16, 4096);
                 defer allocator.free(reply_actual_buffer);

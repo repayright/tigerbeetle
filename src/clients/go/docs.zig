@@ -5,13 +5,29 @@ const run = @import("../shutil.zig").run;
 const file_or_directory_exists = @import("../shutil.zig").file_or_directory_exists;
 const script_filename = @import("../shutil.zig").script_filename;
 
+fn go_current_commit_pre_install_hook(
+    arena: *std.heap.ArenaAllocator,
+    sample_dir: []const u8,
+    _: []const u8,
+) !void {
+    for (&[_][]const u8{ "go.mod", "go.sum" }) |file| {
+        std.os.unlink(try std.fmt.allocPrint(
+            arena.allocator(),
+            "{s}/{s}",
+            .{ sample_dir, file },
+        )) catch {
+            // Delete only if they exist.
+        };
+    }
+}
+
 fn go_current_commit_post_install_hook(
     arena: *std.heap.ArenaAllocator,
     sample_dir: []const u8,
     root: []const u8,
 ) !void {
     try std.os.chdir(root);
-    if (!file_or_directory_exists(arena, "src/clients/go/pkg/native/x86_64-linux")) {
+    if (!file_or_directory_exists("src/clients/go/pkg/native/x86_64-linux")) {
         try run(arena, &[_][]const u8{
             try script_filename(arena, &[_][]const u8{ "scripts", "build" }),
             "go_client",
@@ -23,7 +39,6 @@ fn go_current_commit_post_install_hook(
         "go.mod",
         .{ .write = true, .read = true },
     );
-    defer go_mod.close();
 
     const file_size = try go_mod.getEndPos();
     var go_mod_contents = try arena.allocator().alloc(u8, file_size);
@@ -37,16 +52,18 @@ fn go_current_commit_post_install_hook(
         "require",
         try std.fmt.allocPrint(
             arena.allocator(),
-            "replace github.com/tigerbeetledb/tigerbeetle-go => {s}/src/clients/go\n\nrequire",
+            "replace github.com/tigerbeetle/tigerbeetle-go => {s}/src/clients/go\n\nrequire",
             .{root},
         ),
     );
+    std.debug.print("go.mod:\n\n{s}\n\n", .{go_mod_contents});
 
     // First truncate.
     try go_mod.setEndPos(0);
     // Reset cursor.
     try go_mod.seekTo(0);
     try go_mod.writeAll(go_mod_contents);
+    go_mod.close();
 
     try run(arena, &[_][]const u8{
         "go",
@@ -62,16 +79,15 @@ pub const GoDocs = Docs{
     .extension = "go",
     .proper_name = "Go",
 
-    .test_linux_docker_image = "golang:1.18-alpine",
     .test_source_path = "",
 
     .name = "tigerbeetle-go",
     .description = 
     \\The TigerBeetle client for Go.
     \\
-    \\[![Go Reference](https://pkg.go.dev/badge/github.com/tigerbeetledb/tigerbeetle-go.svg)](https://pkg.go.dev/github.com/tigerbeetledb/tigerbeetle-go)
+    \\[![Go Reference](https://pkg.go.dev/badge/github.com/tigerbeetle/tigerbeetle-go.svg)](https://pkg.go.dev/github.com/tigerbeetle/tigerbeetle-go)
     \\
-    \\Make sure to import `github.com/tigerbeetledb/tigerbeetle-go`, not
+    \\Make sure to import `github.com/tigerbeetle/tigerbeetle-go`, not
     \\this repo and subdirectory.
     ,
 
@@ -92,7 +108,7 @@ pub const GoDocs = Docs{
     .install_sample_file = 
     \\package main
     \\
-    \\import _ "github.com/tigerbeetledb/tigerbeetle-go"
+    \\import _ "github.com/tigerbeetle/tigerbeetle-go"
     \\import "fmt"
     \\
     \\func main() {
@@ -104,9 +120,12 @@ pub const GoDocs = Docs{
 
     .install_commands = 
     \\go mod init tbtest
-    \\go mod tidy
+    \\go get github.com/tigerbeetle/tigerbeetle-go
     ,
-    .build_commands = "go build main.go",
+    .build_commands = 
+    \\go mod tidy
+    \\go build main.go
+    ,
     .run_commands = "go run main.go",
 
     .current_commit_install_commands_hook = null,
@@ -181,7 +200,7 @@ pub const GoDocs = Docs{
     ,
 
     .create_accounts_documentation = 
-    \\The `tb_types` package can be imported from `"github.com/tigerbeetledb/tigerbeetle-go/pkg/types"`.
+    \\The `tb_types` package can be imported from `"github.com/tigerbeetle/tigerbeetle-go/pkg/types"`.
     ,
 
     .account_flags_documentation = 
@@ -269,7 +288,7 @@ pub const GoDocs = Docs{
 
     .no_batch_example = 
     \\for i := 0; i < len(transfers); i++ {
-    \\	errors := client.CreateTransfers(transfers[i]);
+    \\	transfersRes, err = client.CreateTransfers([]tb_types.Transfer{transfers[i]})
     \\	// error handling omitted
     \\}
     ,
@@ -279,9 +298,9 @@ pub const GoDocs = Docs{
     \\for i := 0; i < len(transfers); i += BATCH_SIZE {
     \\	batch := BATCH_SIZE
     \\	if i + BATCH_SIZE > len(transfers) {
-    \\		i = BATCH_SIZE - i
+    \\		batch = len(transfers) - i
     \\	}
-    \\	transfersRes, err := client.CreateTransfers(transfers[i:i + batch])
+    \\	transfersRes, err = client.CreateTransfers(transfers[i:i + batch])
     \\	// error handling omitted
     \\}
     ,
@@ -296,11 +315,13 @@ pub const GoDocs = Docs{
     \\* `tb_types.TransferFlags{PostPendingTransfer: true}.ToUint16()`
     \\* `tb_types.TransferFlags{VoidPendingTransfer: true}.ToUint16()`
     ,
+
     .transfer_flags_link_example = 
     \\transfer0 := tb_types.Transfer{ /* ... account values ... */ }
     \\transfer1 := tb_types.Transfer{ /* ... account values ... */ }
     \\transfer0.Flags = tb_types.TransferFlags{Linked: true}.ToUint16()
     \\transfersRes, err = client.CreateTransfers([]tb_types.Transfer{transfer0, transfer1})
+    \\// error handling omitted
     ,
     .transfer_flags_post_example = 
     \\transfer = tb_types.Transfer{
@@ -310,6 +331,7 @@ pub const GoDocs = Docs{
     \\	Timestamp:	0,
     \\}
     \\transfersRes, err = client.CreateTransfers([]tb_types.Transfer{transfer})
+    \\// error handling omitted
     ,
     .transfer_flags_void_example = 
     \\transfer = tb_types.Transfer{
@@ -319,7 +341,7 @@ pub const GoDocs = Docs{
     \\	Timestamp:	0,
     \\}
     \\transfersRes, err = client.CreateTransfers([]tb_types.Transfer{transfer})
-    \\log.Println(transfersRes, err)
+    \\// error handling omitted
     ,
 
     .lookup_transfers_example = 
@@ -336,7 +358,7 @@ pub const GoDocs = Docs{
     \\linkedFlag := tb_types.TransferFlags{Linked: true}.ToUint16()
     \\
     \\// An individual transfer (successful):
-    \\batch = append(batch, tb_types.Transfer{ID: uint128("1"), /* ... */ })
+    \\batch = append(batch, tb_types.Transfer{ID: uint128("1"), /* ... rest of transfer ... */ })
     \\
     \\// A chain of 4 transfers (the last transfer in the chain closes the chain with linked=false):
     \\batch = append(batch, tb_types.Transfer{ID: uint128("2"), /* ... , */ Flags: linkedFlag }) // Commit/rollback.
@@ -346,19 +368,20 @@ pub const GoDocs = Docs{
     \\
     \\// An individual transfer (successful):
     \\// This should not see any effect from the failed chain above.
-    \\batch = append(batch, tb_types.Transfer{ID: uint128("2"), /* ... */ })
+    \\batch = append(batch, tb_types.Transfer{ID: uint128("2"), /* ... rest of transfer ... */ })
     \\
     \\// A chain of 2 transfers (the first transfer fails the chain):
-    \\batch = append(batch, tb_types.Transfer{ID: uint128("2"), /* ... */ Flags: linkedFlag })
-    \\batch = append(batch, tb_types.Transfer{ID: uint128("3"), /* ... */ })
+    \\batch = append(batch, tb_types.Transfer{ID: uint128("2"), /* ... rest of transfer ... */ Flags: linkedFlag })
+    \\batch = append(batch, tb_types.Transfer{ID: uint128("3"), /* ... rest of transfer ... */ })
     \\
     \\// A chain of 2 transfers (successful):
-    \\batch = append(batch, tb_types.Transfer{ID: uint128("3"), /* ... */ Flags: linkedFlag })
-    \\batch = append(batch, tb_types.Transfer{ID: uint128("4"), /* ... */ })
+    \\batch = append(batch, tb_types.Transfer{ID: uint128("3"), /* ... rest of transfer ... */ Flags: linkedFlag })
+    \\batch = append(batch, tb_types.Transfer{ID: uint128("4"), /* ... rest of transfer ... */ })
     \\
     \\transfersRes, err = client.CreateTransfers(batch)
-    \\log.Println(transfersRes, err)
     ,
+
+    .developer_setup_documentation = "",
 
     // Extra steps to determine commit and repo so this works in
     // CI against forks and pull requests.
@@ -368,7 +391,7 @@ pub const GoDocs = Docs{
     \\if [ "$TEST" = "true" ]; then go test; else echo "Skipping client unit tests"; fi
     ,
 
-    .current_commit_pre_install_hook = null,
+    .current_commit_pre_install_hook = go_current_commit_pre_install_hook,
     .current_commit_post_install_hook = go_current_commit_post_install_hook,
 
     // Extra steps to determine commit and repo so this works in
@@ -385,8 +408,8 @@ pub const GoDocs = Docs{
     \\import "log"
     \\import "os"
     \\
-    \\import tb "github.com/tigerbeetledb/tigerbeetle-go"
-    \\import tb_types "github.com/tigerbeetledb/tigerbeetle-go/pkg/types"
+    \\import tb "github.com/tigerbeetle/tigerbeetle-go"
+    \\import tb_types "github.com/tigerbeetle/tigerbeetle-go/pkg/types"
     \\
     \\func uint128(value string) tb_types.Uint128 {
     \\	x, err := tb_types.HexStringToUint128(value)

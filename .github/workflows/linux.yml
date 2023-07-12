@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - run: ./scripts/docs_check.sh
+      - run: ./.github/ci/docs_check.sh
 
   test:
     if: inputs.version == ''
@@ -52,7 +52,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - run: ./scripts/install_zig.sh
-      - run: ./scripts/test_aof.sh
+      - run: ./.github/ci/test_aof.sh
 
   c_sample:
     if: inputs.version == ''
@@ -79,7 +79,7 @@ jobs:
 
       # Disabled for now, since they're slow.
       # # This both checks that the hash_log builds and acts as a regression test for
-      # # https://github.com/tigerbeetledb/tigerbeetle/issues/404
+      # # https://github.com/tigerbeetle/tigerbeetle/issues/404
       # - run: zig/zig build fuzz_lsm_manifest_log -- --seed 123 --events-max 400
       # - run: zig/zig build fuzz_vsr_superblock_free_set -- --seed 123
       # - run: zig/zig build fuzz_lsm_forest -Dhash-log-mode=create -Drelease-safe -- --seed 16319736705930193193 --events-max 10000 && zig/zig build fuzz_lsm_forest -Dhash-log-mode=check -- --seed 16319736705930193193 --events-max 10000
@@ -145,6 +145,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64,linux/arm64
+          file: tools/docker/Dockerfile
 
       # This is required because we can't load multiple platforms. Instead,
       # just load amd64 for verification below.
@@ -162,12 +163,13 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64
+          file: tools/docker/Dockerfile
 
       # Validate the image
       - if: matrix.debug == 'production'
-        run: ./scripts/confirm_image.sh ${{ steps.docker_load.outputs.imageid }} --want-production
+        run: ./.github/ci/confirm_image.sh ${{ steps.docker_load.outputs.imageid }} --want-production
       - if: matrix.debug == 'debug'
-        run: ./scripts/confirm_image.sh ${{ steps.docker_load.outputs.imageid }} --want-debug
+        run: ./.github/ci/confirm_image.sh ${{ steps.docker_load.outputs.imageid }} --want-debug
 
       # Login and publish, if we're in a release
       - if: inputs.version != ''
@@ -192,3 +194,4 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64,linux/arm64
+          file: tools/docker/Dockerfile

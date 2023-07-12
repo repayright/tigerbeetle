@@ -121,13 +121,14 @@ To correctly recover from application crashes
 
 For language-specific docs see:
 
-* [Creating accounts using the Java library](/src/clients/java#creating-accounts)
-* [Creating accounts using the Go library](/src/clients/go#creating-accounts)
-* [Creating accounts using the Node.js library](/src/clients/node#creating-accounts)
+* [Creating accounts using the .NET library](/src/clients/dotnet/README.md#creating-accounts)
+* [Creating accounts using the Java library](/src/clients/java/README.md#creating-accounts)
+* [Creating accounts using the Go library](/src/clients/go/README.md#creating-accounts)
+* [Creating accounts using the Node.js library](/src/clients/node/README.md#creating-accounts)
 
 ## Internals
 
 If you're curious and want to learn more, you can find the source code
 for creating an account in
-[src/state_machine.zig](https://github.com/tigerbeetledb/tigerbeetle/blob/main/src/state_machine.zig). Search
+[src/state_machine.zig](https://github.com/tigerbeetle/tigerbeetle/blob/main/src/state_machine.zig). Search
 for `fn create_account(` and `fn execute(`.

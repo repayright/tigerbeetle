@@ -19,11 +19,6 @@ pub fn StateMachineType(
         pub const Workload = WorkloadType(StateMachine);
 
         pub const Operation = enum(u8) {
-            /// Operations reserved by VR protocol (for all state machines):
-            reserved = 0,
-            root = 1,
-            register = 2,
-
             echo = config.vsr_operations_reserved + 0,
         };
 
@@ -37,11 +32,15 @@ pub fn StateMachineType(
             Storage,
             Thing,
             .{
+                .ids = .{
+                    .timestamp = 1,
+                    .id = 2,
+                    .value = 3,
+                },
                 .value_count_max = .{
                     .timestamp = config.lsm_batch_multiple,
                     .id = config.lsm_batch_multiple,
-                    // ×2: modifying a 'value' both inserts the new Thing, and removes the old one.
-                    .value = 2 * config.lsm_batch_multiple,
+                    .value = config.lsm_batch_multiple,
                 },
                 .ignored = &[_][]const u8{},
                 .derived = .{},
@@ -89,6 +88,15 @@ pub fn StateMachineType(
             state_machine.forest.deinit(allocator);
         }
 
+        pub fn reset(state_machine: *StateMachine) void {
+            state_machine.forest.reset();
+
+            state_machine.* = .{
+                .options = state_machine.options,
+                .forest = state_machine.forest,
+            };
+        }
+
         pub fn open(state_machine: *StateMachine, callback: fn (*StateMachine) void) void {
             assert(state_machine.callback == null);
 
@@ -107,12 +115,11 @@ pub fn StateMachineType(
         pub fn prepare(
             state_machine: *StateMachine,
             operation: Operation,
-            input: []u8,
-        ) u64 {
+            input: []align(16) u8,
+        ) void {
+            _ = state_machine;
             _ = operation;
             _ = input;
-
-            return state_machine.prepare_timestamp;
         }
 
         pub fn prefetch(
@@ -120,7 +127,7 @@ pub fn StateMachineType(
             callback: fn (*StateMachine) void,
             op: u64,
             operation: Operation,
-            input: []const u8,
+            input: []align(16) const u8,
         ) void {
             _ = op;
             _ = operation;
@@ -131,7 +138,7 @@ pub fn StateMachineType(
 
             // TODO(Snapshots) Pass in the target snapshot.
             state_machine.forest.grooves.things.prefetch_setup(null);
-            state_machine.forest.grooves.things.prefetch_enqueue(123, .negative_lookup);
+            state_machine.forest.grooves.things.prefetch_enqueue(op, .negative_lookup);
             state_machine.forest.grooves.things.prefetch(prefetch_callback, &state_machine.prefetch_context);
         }
 
@@ -149,22 +156,20 @@ pub fn StateMachineType(
             op: u64,
             timestamp: u64,
             operation: Operation,
-            input: []const u8,
-            output: []u8,
+            input: []align(16) const u8,
+            output: *align(16) [constants.message_body_size_max]u8,
         ) usize {
             _ = client;
             assert(op != 0);
 
             switch (operation) {
-                .reserved, .root => unreachable,
-                .register => return 0,
                 .echo => {
-                    const thing = state_machine.forest.grooves.things.get(123);
-                    const key: u64 = if (thing) |t| t.timestamp else timestamp;
+                    const thing = state_machine.forest.grooves.things.get(op);
+                    assert(thing == null);
 
                     state_machine.forest.grooves.things.upsert(&.{
-                        .timestamp = key,
-                        .id = 123,
+                        .timestamp = timestamp,
+                        .id = op,
                         .value = @truncate(u64, vsr.checksum(input)),
                     });
 
@@ -269,7 +274,7 @@ fn WorkloadType(comptime StateMachine: type) type {
         pub fn on_reply(
             workload: *Workload,
             client_index: usize,
-            operation: vsr.Operation,
+            operation: StateMachine.Operation,
             timestamp: u64,
             request_body: []align(@alignOf(vsr.Header)) const u8,
             reply_body: []align(@alignOf(vsr.Header)) const u8,
@@ -280,7 +285,7 @@ fn WorkloadType(comptime StateMachine: type) type {
             workload.requests_delivered += 1;
             assert(workload.requests_delivered <= workload.requests_sent);
 
-            assert(operation.cast(StateMachine) == .echo);
+            assert(operation == .echo);
             assert(std.mem.eql(u8, request_body, reply_body));
         }
 

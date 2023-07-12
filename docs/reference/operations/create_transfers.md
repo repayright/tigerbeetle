@@ -350,13 +350,14 @@ would exceed `credit_account.debits_posted`.
 
 For language-specific docs see:
 
-* [Creating transfers using the Java library](/src/clients/java#create-transfers)
-* [Creating transfers using the Go library](/src/clients/go#create-transfers)
-* [Creating transfers using the Node.js library](/src/clients/node#create-transfers)
+* [Creating transfers using the .NET library](/src/clients/dotnet/README.md#create-transfers)
+* [Creating transfers using the Java library](/src/clients/java/README.md#create-transfers)
+* [Creating transfers using the Go library](/src/clients/go/README.md#create-transfers)
+* [Creating transfers using the Node.js library](/src/clients/node/README.md#create-transfers)
 
 ## Internals
 
 If you're curious and want to learn more, you can find the source code
 for creating an transfer in
-[src/state_machine.zig](https://github.com/tigerbeetledb/tigerbeetle/blob/main/src/state_machine.zig). Search
+[src/state_machine.zig](https://github.com/tigerbeetle/tigerbeetle/blob/main/src/state_machine.zig). Search
 for `fn create_transfer(` and `fn execute(`.

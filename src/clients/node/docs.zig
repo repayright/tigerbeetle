@@ -66,11 +66,6 @@ pub const NodeDocs = Docs{
     .extension = "js",
     .proper_name = "Node.js",
 
-    // Phil: While installing TigerBeetle on Node 14 works, building
-    // (`npm install --include dev`) seems to require a newer Node
-    // version. I've tried this on alpine and debian images and
-    // couldn't get the install to work on either with Node 14.
-    .test_linux_docker_image = "node:16-alpine",
     .test_source_path = "",
 
     .name = "tigerbeetle-node",
@@ -107,12 +102,12 @@ pub const NodeDocs = Docs{
     \\If you run into issues, check out the distribution-specific install
     \\steps that are run in CI to test support:
     \\
-    \\* [Alpine](https://github.com/tigerbeetledb/tigerbeetle/blob/main/src/clients/node/scripts/test_install_on_alpine.sh)
-    \\* [Amazon Linux](https://github.com/tigerbeetledb/tigerbeetle/blob/main/src/clients/node/scripts/test_install_on_amazonlinux.sh)
-    \\* [Debian](https://github.com/tigerbeetledb/tigerbeetle/blob/main/src/clients/node/scripts/test_install_on_debian.sh)
-    \\* [Fedora](https://github.com/tigerbeetledb/tigerbeetle/blob/main/src/clients/node/scripts/test_install_on_fedora.sh)
-    \\* [Ubuntu](https://github.com/tigerbeetledb/tigerbeetle/blob/main/src/clients/node/scripts/test_install_on_ubuntu.sh)
-    \\* [RHEL](https://github.com/tigerbeetledb/tigerbeetle/blob/main/src/clients/node/scripts/test_install_on_rhelubi.sh)
+    \\* [Alpine](https://github.com/tigerbeetle/tigerbeetle/blob/main/src/clients/node/scripts/test_install_on_alpine.sh)
+    \\* [Amazon Linux](https://github.com/tigerbeetle/tigerbeetle/blob/main/src/clients/node/scripts/test_install_on_amazonlinux.sh)
+    \\* [Debian](https://github.com/tigerbeetle/tigerbeetle/blob/main/src/clients/node/scripts/test_install_on_debian.sh)
+    \\* [Fedora](https://github.com/tigerbeetle/tigerbeetle/blob/main/src/clients/node/scripts/test_install_on_fedora.sh)
+    \\* [Ubuntu](https://github.com/tigerbeetle/tigerbeetle/blob/main/src/clients/node/scripts/test_install_on_ubuntu.sh)
+    \\* [RHEL](https://github.com/tigerbeetle/tigerbeetle/blob/main/src/clients/node/scripts/test_install_on_rhelubi.sh)
     ,
     .examples = 
     \\### Sidenote: `BigInt`
@@ -490,6 +485,8 @@ pub const NodeDocs = Docs{
     \\ * ]
     \\ */
     ,
+
+    .developer_setup_documentation = "",
 
     // Extra steps to determine commit and repo so this works in
     // CI against forks and pull requests.

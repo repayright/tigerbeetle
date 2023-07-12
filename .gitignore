@@ -8,9 +8,15 @@ journal
 simulator
 /tigerbeetle
 /tigerbeetle.exe
-*_*.tigerbeetle
+*_*.tigerbeetle.*
 zig/
 zig-cache/
 zig-out/
+tools/tracy
+# By convention, logs from simulator use .vopr extension.
+*.vopr
+
+# We have a recommended vscode config under tools/vscode, which you can symlink to .vscode.
+.vscode/
 
 docs_website

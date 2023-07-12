@@ -4,6 +4,7 @@ test {
     _ = @import("io.zig");
     _ = @import("ring_buffer.zig");
     _ = @import("stdx.zig");
+    _ = @import("hash_map.zig");
 
     _ = @import("clients/c/test.zig");
     _ = @import("clients/c/tb_client_header_test.zig");
@@ -12,14 +13,19 @@ test {
     _ = @import("clients/java/java_bindings.zig");
     _ = @import("clients/node/node_bindings.zig");
 
-    // TODO Add remaining unit tests from lsm namespace.
-    _ = @import("lsm/forest.zig");
-    _ = @import("lsm/manifest_level.zig");
-    _ = @import("lsm/segmented_array.zig");
-    _ = @import("lsm/k_way_merge.zig");
-    _ = @import("lsm/table_memory.zig");
+    _ = @import("lsm/binary_search.zig");
+    _ = @import("lsm/bloom_filter.zig");
     _ = @import("lsm/cache_map.zig");
+    _ = @import("lsm/eytzinger.zig");
+    _ = @import("lsm/forest.zig");
+    _ = @import("lsm/groove.zig");
+    _ = @import("lsm/k_way_merge.zig");
+    _ = @import("lsm/manifest_level.zig");
+    _ = @import("lsm/node_pool.zig");
+    _ = @import("lsm/segmented_array.zig");
     _ = @import("lsm/set_associative_cache.zig");
+    _ = @import("lsm/table.zig");
+    _ = @import("lsm/tree.zig");
 
     _ = @import("state_machine.zig");
     _ = @import("state_machine/auditor.zig");
@@ -43,6 +49,9 @@ test {
     _ = @import("vsr/superblock_free_set.zig");
     _ = @import("vsr/superblock_manifest.zig");
     _ = @import("vsr/superblock_quorums.zig");
+    _ = @import("vsr/sync.zig");
 
     _ = @import("aof.zig");
+
+    _ = @import("shell.zig");
 }

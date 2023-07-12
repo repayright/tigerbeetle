@@ -8,7 +8,7 @@
 //! - Calling checkpoint() and view_change() concurrently is safe.
 //!   - VSRState will not leak before the corresponding checkpoint()/view_change().
 //!   - Trailers will not leak before the corresponding checkpoint().
-//! - view_change_in_progress() reports the correct state.
+//! - updating() reports the correct state.
 //!
 const std = @import("std");
 const assert = std.debug.assert;
@@ -24,6 +24,7 @@ const data_file_size_min = @import("superblock.zig").data_file_size_min;
 const VSRState = @import("superblock.zig").SuperBlockHeader.VSRState;
 const SuperBlockHeader = @import("superblock.zig").SuperBlockHeader;
 const SuperBlockType = @import("superblock.zig").SuperBlockType;
+const Caller = @import("superblock.zig").Caller;
 const SuperBlock = SuperBlockType(Storage);
 const fuzz = @import("../testing/fuzz.zig");
 
@@ -92,18 +93,21 @@ fn run_fuzz(allocator: std.mem.Allocator, seed: u64, transitions_count_total: us
     var sequence_states = Environment.SequenceStates.init(allocator);
     defer sequence_states.deinit();
 
+    const members = vsr.root_members(cluster);
     var env = Environment{
+        .members = members,
         .sequence_states = sequence_states,
         .superblock = &superblock,
         .superblock_verify = &superblock_verify,
         .latest_vsr_state = SuperBlockHeader.VSRState{
+            .previous_checkpoint_id = 0,
             .commit_min_checksum = 0,
             .commit_min = 0,
             .commit_max = 0,
             .log_view = 0,
             .view = 0,
-            .replica_id = Environment.members()[replica],
-            .members = Environment.members(),
+            .replica_id = members[replica],
+            .members = members,
             .replica_count = replica_count,
         },
     };
@@ -156,19 +160,6 @@ fn run_fuzz(allocator: std.mem.Allocator, seed: u64, transitions_count_total: us
 }
 
 const Environment = struct {
-    var id_once = std.once(id_init);
-    var id_members: [constants.nodes_max]u128 = undefined;
-    fn id_init() void {
-        id_members = vsr.root_members(cluster);
-    }
-
-    /// Aegis128 (used by checksum) uses hardware accelerated AES via inline asm which isn't
-    /// available at comptime. Instead of a constant, lazily initialize the root members.
-    fn members() [constants.nodes_max]u128 {
-        id_once.call();
-        return id_members;
-    }
-
     /// Track the expected value of parameters at a particular sequence.
     /// Indexed by sequence.
     const SequenceStates = std.ArrayList(struct {
@@ -181,6 +172,8 @@ const Environment = struct {
     });
 
     sequence_states: SequenceStates,
+
+    members: [constants.nodes_max]u128,
 
     superblock: *SuperBlock,
     superblock_verify: *SuperBlock,
@@ -198,7 +191,7 @@ const Environment = struct {
     context_verify: SuperBlock.Context = undefined,
 
     // Set bits indicate pending operations.
-    pending: std.enums.EnumSet(SuperBlock.Context.Caller) = .{},
+    pending: std.enums.EnumSet(Caller) = .{},
     pending_verify: bool = false,
 
     /// After every write to `superblock`'s storage, verify that the superblock can be opened,
@@ -209,7 +202,7 @@ const Environment = struct {
         assert(!env.pending.contains(.format));
         assert(!env.pending.contains(.open));
         assert(!env.pending_verify);
-        assert(env.pending.contains(.view_change) == env.superblock.view_change_in_progress());
+        assert(env.pending.contains(.view_change) == env.superblock.updating(.view_change));
 
         const write = env.superblock.storage.writes.peek();
         env.superblock.storage.tick();
@@ -240,6 +233,7 @@ const Environment = struct {
         // faults for pending writes) and clear the read/write queues.
         env.superblock_verify.storage.copy(env.superblock.storage);
         env.superblock_verify.storage.reset();
+        env.superblock_verify.client_sessions.reset();
         env.superblock_verify.open(verify_callback, &env.context_verify);
 
         env.pending_verify = true;
@@ -300,8 +294,8 @@ const Environment = struct {
         try env.sequence_states.append(.{
             .vsr_state = VSRState.root(.{
                 .cluster = cluster,
-                .replica_id = members()[replica],
-                .members = members(),
+                .replica_id = env.members[replica],
+                .members = env.members,
                 .replica_count = replica_count,
             }),
             .vsr_headers = vsr_headers,
@@ -327,7 +321,7 @@ const Environment = struct {
         env.pending.remove(.open);
 
         assert(env.superblock.working.sequence == 1);
-        assert(env.superblock.working.vsr_state.replica_id == members()[replica]);
+        assert(env.superblock.working.vsr_state.replica_id == env.members[replica]);
         assert(env.superblock.working.vsr_state.replica_count == replica_count);
         assert(env.superblock.working.cluster == cluster);
     }
@@ -337,13 +331,14 @@ const Environment = struct {
         assert(env.pending.count() < 2);
 
         const vsr_state = .{
+            .previous_checkpoint_id = env.superblock.staging.vsr_state.previous_checkpoint_id,
             .commit_min_checksum = env.superblock.staging.vsr_state.commit_min_checksum,
             .commit_min = env.superblock.staging.vsr_state.commit_min,
             .commit_max = env.superblock.staging.vsr_state.commit_max + 3,
             .log_view = env.superblock.staging.vsr_state.log_view + 4,
             .view = env.superblock.staging.vsr_state.view + 5,
-            .replica_id = members()[replica],
-            .members = members(),
+            .replica_id = env.members[replica],
+            .members = env.members,
             .replica_count = replica_count,
         };
 
@@ -386,15 +381,30 @@ const Environment = struct {
         assert(env.pending.count() < 2);
 
         const vsr_state = .{
+            .previous_checkpoint_id = env.superblock.staging.checkpoint_id(),
             .commit_min_checksum = env.superblock.staging.vsr_state.commit_min_checksum + 1,
             .commit_min = env.superblock.staging.vsr_state.commit_min + 1,
             .commit_max = env.superblock.staging.vsr_state.commit_max + 1,
             .log_view = env.superblock.staging.vsr_state.log_view,
             .view = env.superblock.staging.vsr_state.view,
-            .replica_id = members()[replica],
-            .members = members(),
+            .replica_id = env.members[replica],
+            .members = env.members,
             .replica_count = replica_count,
         };
+
+        // To mimic the replica, ClientSessions mutates between every checkpoint.
+        // This ensures that sequential checkpoint ids are never identical.
+        const session: u64 = 1;
+        var reply = vsr.Header{
+            .cluster = cluster,
+            .command = .reply,
+            .client = 456,
+            .commit = vsr_state.commit_min,
+        };
+        reply.set_checksum_body(&.{});
+        reply.set_checksum();
+
+        _ = env.superblock.client_sessions.put(session, &reply);
 
         assert(env.sequence_states.items.len == env.superblock.staging.sequence + 1);
         try env.sequence_states.append(.{

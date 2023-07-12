@@ -82,10 +82,7 @@ pub fn shell_wrap(arena: *std.heap.ArenaAllocator, cmd: []const u8) ![]const []c
     if (builtin.os.tag == .windows) {
         try wrapped.append(try std.fmt.allocPrint(
             arena.allocator(),
-            // \\Set-StrictMode -Version 3;
-            // \\$ErrorActionPreference = 'Stop';
-            // \\$PSDefaultParameterValues['*:ErrorAction']='Stop';
-            // \\$LASTEXITCODE = 0;
+            \\Set-PSDebug -Trace 1
             \\
             \\{s}
         ,
@@ -96,13 +93,6 @@ pub fn shell_wrap(arena: *std.heap.ArenaAllocator, cmd: []const u8) ![]const []c
                 ";",
                 "; if(!$?) { Exit $LASTEXITCODE }; ",
             )},
-            // .{try std.mem.replaceOwned(
-            //     u8,
-            //     arena.allocator(),
-            //     cmd,
-            //     "\"",
-            //     "\\\"",
-            // )},
         ));
     } else {
         try wrapped.append(cmd);
@@ -219,10 +209,18 @@ pub fn binary_filename(arena: *std.heap.ArenaAllocator, parts: []const []const u
     return file_name.items;
 }
 
-pub fn file_or_directory_exists(arena: *std.heap.ArenaAllocator, f_or_d: []const u8) bool {
-    _ = std.fs.cwd().realpathAlloc(arena.allocator(), f_or_d) catch {
-        return false;
+pub fn file_or_directory_exists(f_or_d: []const u8) bool {
+    var file = std.fs.cwd().openFile(f_or_d, .{}) catch |err| {
+        switch (err) {
+            error.FileNotFound => return false,
+            error.IsDir => return true,
+            else => std.debug.panic(
+                "unexpected error while checking file_or_directory_exists({s}): {s}",
+                .{ f_or_d, @errorName(err) },
+            ),
+        }
     };
+    file.close();
 
     return true;
 }

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/tigerbeetledb/tigerbeetle-go/assert"
-	"github.com/tigerbeetledb/tigerbeetle-go/pkg/types"
+	"github.com/tigerbeetle/tigerbeetle-go/assert"
+	"github.com/tigerbeetle/tigerbeetle-go/pkg/types"
 )
 
 const (
@@ -37,6 +37,7 @@ func WithClient(s testing.TB, withClient func(Client)) {
 	}
 
 	addressArg := "--addresses=" + TIGERBEETLE_PORT
+	cacheSizeArg := "--cache-grid=128MB"
 	replicaArg := fmt.Sprintf("--replica=%d", TIGERBEETLE_REPLICA_ID)
 	replicaCountArg := fmt.Sprintf("--replica-count=%d", TIGERBEETLE_REPLICA_COUNT)
 	clusterArg := fmt.Sprintf("--cluster=%d", TIGERBEETLE_CLUSTER_ID)
@@ -57,7 +58,7 @@ func WithClient(s testing.TB, withClient func(Client)) {
 		_ = os.Remove(fileName)
 	})
 
-	tbStart := exec.Command(tigerbeetlePath, "start", addressArg, fileName)
+	tbStart := exec.Command(tigerbeetlePath, "start", addressArg, cacheSizeArg, fileName)
 	if err := tbStart.Start(); err != nil {
 		s.Fatal(err)
 	}
