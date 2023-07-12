@@ -198,7 +198,7 @@ pub fn CompactionType(
 
             // TODO, only if we're for an immutable table. This holds the values yielded from
             // the iterator.
-            var immutable_values_in = try allocator.alloc(Value, 8192 * 64);
+            var immutable_values_in = try allocator.alloc(Value, 8192);
             errdefer allocator.free(immutable_values_in);
 
             return Compaction{
@@ -233,7 +233,7 @@ pub fn CompactionType(
             allocator.free(compaction.index_block_b);
             compaction.iterator_b.deinit();
             compaction.iterator_a.deinit();
-            allocator.free(compaction.immutable_values_in.ptr[0 .. 8192 * 64]);
+            allocator.free(compaction.immutable_values_in.ptr[0 .. 8192]);
         }
 
         pub fn reset(compaction: *Compaction) void {
@@ -258,7 +258,7 @@ pub fn CompactionType(
                 .state = .idle,
 
                 // TODO double check
-                .immutable_values_in = compaction.immutable_values_in.ptr[0 .. 8192 * 64],
+                .immutable_values_in = compaction.immutable_values_in.ptr[0 .. 8192],
 
                 .tracer_slot = null,
                 .iterator_tracer_slot = null,
@@ -290,7 +290,7 @@ pub fn CompactionType(
         fn fill_immutable_values(compaction: *Compaction) void {
             std.log.info("{s}: Entering fill immutable values...", .{compaction.tree_name});
             // Reset our slice
-            compaction.immutable_values_in = compaction.immutable_values_in.ptr[0 .. 8192 * 64];
+            compaction.immutable_values_in = compaction.immutable_values_in.ptr[0 .. 8192];
 
             var i: u32 = 0;
             var immutable_values_in = compaction.immutable_values_in;

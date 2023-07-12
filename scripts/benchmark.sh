@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -eEuo pipefail
 
-zig build install -Dconfig=production
+zig build install -Drelease-safe -Dconfig=production
 
 function onerror {
     kill %2
