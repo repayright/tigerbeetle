@@ -164,7 +164,6 @@ pub fn TableMemoryType(comptime Table: type) type {
             var i: u32 = 0;
             while (i < table.value_context.buffers_count) : (i += 1) {
                 table.streams[i] = table.value_context.buffers[i];
-                // std.log.info("Stream {} len {}", .{ i, table.streams[i].len });
             }
 
             return Iterator.init(table, i, .ascending);

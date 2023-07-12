@@ -128,7 +128,6 @@ pub fn KWayMergeIterator(
                 },
             }
             if (it.k == 0)  {
-                std.log.info("k == 0 bottom", .{});
                 return null;
             }
             const root = it.streams[0];
