@@ -1005,7 +1005,7 @@ pub fn GrooveType(
             const Join = JoinType(.compacting);
             Join.start(groove, callback);
 
-            // Compact the ObjectTree and IdTree.
+            // Compact the IdTree and ObjectTree.
             if (has_id) groove.ids.compact(Join.tree_callback(.ids), op);
             groove.objects.compact(Join.tree_callback(.objects), op);
 

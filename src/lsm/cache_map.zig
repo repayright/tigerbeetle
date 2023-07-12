@@ -100,8 +100,10 @@ pub fn CacheMap(
             self.map.deinit(allocator);
             self.scope_map.deinit(allocator);
             self.cache.deinit(allocator);
-            // TODO: Freeing for loop
-            // allocator.free(self.ops_keys);
+
+            for (self.ops_keys) |op_keys| {
+                allocator.free(op_keys);
+            }
         }
 
         // TODO: Profile me

@@ -837,11 +837,13 @@ pub fn StateMachineType(
                     count += 1;
                 }
                 if (chain != null and (!event.flags.linked or result == .linked_event_chain_open)) {
+                    if (!chain_broken) {
+                        // We've finished this linked chain, and all events have applied successfully.
+                        self.scope_close(operation, .persist);
+                    }
+
                     chain = null;
                     chain_broken = false;
-
-                    // We've finished this linked chain, and all events have applied successfully.
-                    self.scope_close(operation, .persist);
                 }
             }
             assert(chain == null);

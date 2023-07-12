@@ -230,6 +230,7 @@ pub fn CompactionType(
             compaction.table_builder.deinit(allocator);
             for (compaction.data_blocks) |data_block| allocator.free(data_block);
             allocator.free(compaction.index_block_a);
+            allocator.free(compaction.index_block_b);
             compaction.iterator_b.deinit();
             compaction.iterator_a.deinit();
             allocator.free(compaction.immutable_values_in.ptr[0 .. 8192 * 64]);

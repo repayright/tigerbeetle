@@ -873,6 +873,7 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type) type {
                         // Mark that the contents of our immutable table have been flushed,
                         // so its safe to clear them.
                         tree.table_immutable.mutability.immutable.flushed = true;
+                        tree.compaction_table_immutable.transition_to_idle();
                         tree.compaction_table_immutable.reset();
                     },
                     else => unreachable,

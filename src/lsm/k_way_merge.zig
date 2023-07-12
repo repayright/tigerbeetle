@@ -216,7 +216,7 @@ fn TestContext(comptime k_max: u32) type {
     return struct {
         const Self = @This();
 
-        const log = true;
+        const log = false;
 
         const Value = struct {
             key: u32,
