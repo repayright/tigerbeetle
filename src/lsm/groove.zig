@@ -428,7 +428,6 @@ pub fn GrooveType(
         ObjectsCacheHelpers.HashMapContextValue,
         ObjectsCacheHelpers.tombstone_from_key,
         ObjectsCacheHelpers.tombstone,
-        @typeName(Object),
     );
 
     return struct {
@@ -499,6 +498,20 @@ pub fn GrooveType(
             grid: *Grid,
             options: Options,
         ) !Groove {
+            assert(options.cache_entries_max > 0);
+            var objects_cache = try allocator.create(ObjectsCache);
+            errdefer allocator.destroy(objects_cache);
+
+            objects_cache.* = try ObjectsCache.init(
+                allocator,
+                options.cache_entries_max,
+
+                // TODO: Sizing here
+                options.prefetch_entries_max * 2,
+            );
+            errdefer objects_cache.deinit(allocator);
+
+            // Intialize the object LSM tree.
             var object_tree = try ObjectTree.init(
                 allocator,
                 node_pool,
@@ -559,7 +572,6 @@ pub fn GrooveType(
 
                 .prefetch_ids = prefetch_ids,
                 .prefetch_snapshot = null,
-
                 .objects_cache = objects_cache,
             };
         }
@@ -588,15 +600,16 @@ pub fn GrooveType(
             if (has_id) groove.ids.reset();
 
             groove.prefetch_ids.clearRetainingCapacity();
-            groove.prefetch_objects.clearRetainingCapacity();
+            // groove.prefetch_objects.clearRetainingCapacity();
+            // TODO: Reset for objects cache...
 
             groove.* = .{
                 .objects = groove.objects,
                 .ids = groove.ids,
                 .indexes = groove.indexes,
                 .prefetch_ids = groove.prefetch_ids,
-                .prefetch_objects = groove.prefetch_objects,
                 .prefetch_snapshot = null,
+                .objects_cache = groove.objects_cache,
             };
         }
 
@@ -789,16 +802,13 @@ pub fn GrooveType(
                 const worker = LookupContext.parent(completion);
                 worker.lookup = undefined;
 
+                // TODO: Revisit - conflict
                 if (result) |object| {
                     assert(!ObjectTreeHelpers(Object).tombstone(object));
-                    worker.context.groove.prefetch_objects.putAssumeCapacityNoClobber(object.*, {});
-                } else {
-                    // When there is an id tree, the result must be non-null,
-                    // as we keep the ID and Object trees in sync.
-                    assert(!has_id);
+                    // worker.context.groove.prefetch_objects.putAssumeCapacityNoClobber(object.*, {});
+                    worker.context.groove.objects_cache.upsert(object);
                 }
 
-                worker.context.groove.objects_cache.upsert(object);
                 worker.lookup_start_next();
             }
         };

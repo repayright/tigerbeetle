@@ -285,7 +285,7 @@ pub fn StateMachineType(
             .accounts_immutable = AccountsImmutableGroove,
             .accounts_mutable = AccountsMutableGroove,
             .transfers = TransfersGroove,
-            // .posted = PostedGroove,
+            .posted = PostedGroove,
         });
 
         pub const Operation = enum(u8) {
@@ -309,7 +309,7 @@ pub fn StateMachineType(
             accounts_immutable: AccountsImmutableGroove.PrefetchContext,
             accounts_mutable: AccountsMutableGroove.PrefetchContext,
             transfers: TransfersGroove.PrefetchContext,
-            // posted: PostedGroove.PrefetchContext,
+            posted: PostedGroove.PrefetchContext,
 
             // TODO(Zig): No need for this function once Zig is upgraded
             // and @fieldParentPtr() can be used for unions.
@@ -318,8 +318,8 @@ pub fn StateMachineType(
                 const T = @TypeOf(completion);
                 comptime assert(T == *AccountsImmutableGroove.PrefetchContext or
                     T == *AccountsMutableGroove.PrefetchContext or
-                    T == *TransfersGroove.PrefetchContext); // or
-                //T == *PostedGroove.PrefetchContext);
+                    T == *TransfersGroove.PrefetchContext or
+                    T == *PostedGroove.PrefetchContext);
 
                 return @fieldParentPtr(
                     StateMachine,
@@ -451,7 +451,7 @@ pub fn StateMachineType(
             self.forest.grooves.accounts_immutable.prefetch_setup(null);
             self.forest.grooves.accounts_mutable.prefetch_setup(null);
             self.forest.grooves.transfers.prefetch_setup(null);
-            // self.forest.grooves.posted.prefetch_setup(null);
+            self.forest.grooves.posted.prefetch_setup(null);
 
             return switch (operation) {
                 .create_accounts => {
@@ -569,7 +569,7 @@ pub fn StateMachineType(
 
                         // This prefetch isn't run yet, but enqueue it here as well to save an extra
                         // iteration over transfers.
-                        self.forest.grooves.posted.prefetch_enqueue(p.timestamp);
+                        self.forest.grooves.posted.prefetch_enqueue(p.timestamp, .positive_lookup);
                     }
                 } else {
                     if (self.forest.grooves.accounts_immutable.get(t.debit_account_id)) |dr_immut| {
@@ -590,12 +590,6 @@ pub fn StateMachineType(
         fn prefetch_create_transfers_callback_accounts_mutable(completion: *AccountsMutableGroove.PrefetchContext) void {
             const self = PrefetchContext.parent(completion);
             self.prefetch_finish();
-
-            // TODO: Pending groove unification
-            // self.forest.grooves.posted.prefetch(
-            //     prefetch_create_transfers_callback_posted,
-            //     &self.prefetch_context.posted,
-            // );
         }
 
         // TODO: Pending groove unification
@@ -1158,17 +1152,15 @@ pub fn StateMachineType(
                 .amount = amount,
             });
 
-            // TODO
-            // self.forest.grooves.posted.insert(t.pending_id, t.flags.post_pending_transfer);
-            // self.forest.grooves.posted.put_no_clobber(&PostedGrooveValue{
-            //     .timestamp = p.timestamp,
-            //     .fulfillment = fulfillment: {
-            //         if (t.flags.post_pending_transfer) break :fulfillment .posted;
-            //         if (t.flags.void_pending_transfer) break :fulfillment .voided;
-            //         unreachable;
-            //     },
-            //     .padding = [_]u8{0} ** 7,
-            // });
+            self.forest.grooves.posted.insert(&PostedGrooveValue{
+                .timestamp = p.timestamp,
+                .fulfillment = fulfillment: {
+                    if (t.flags.post_pending_transfer) break :fulfillment .posted;
+                    if (t.flags.void_pending_transfer) break :fulfillment .voided;
+                    unreachable;
+                },
+                .padding = [_]u8{0} ** 7,
+            });
 
             var dr_mut_new = self.forest.grooves.accounts_mutable.get(dr_immut.timestamp).?.*;
             var cr_mut_new = self.forest.grooves.accounts_mutable.get(cr_immut.timestamp).?.*;
@@ -1324,9 +1316,8 @@ pub fn StateMachineType(
                 },
                 .posted = .{
                     .prefetch_entries_max = batch_transfers_max,
-                    .tree_options_object = .{
-                        .cache_entries_max = options.cache_entries_posted,
-                    },
+                    .cache_entries_max = options.cache_entries_transfers, // TODO
+                    .tree_options_object = .{},
                     .tree_options_id = {},
                     .tree_options_index = .{},
                 },

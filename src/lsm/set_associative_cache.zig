@@ -33,7 +33,6 @@ pub fn SetAssociativeCache(
 ) type {
     assert(math.isPowerOfTwo(@sizeOf(Key)));
     assert(math.isPowerOfTwo(@sizeOf(Value)));
-    _ = name;
 
     switch (layout.ways) {
         // An 8-way set-associative cache has the clock hand as a u3, which would introduce padding.

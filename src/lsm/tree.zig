@@ -255,14 +255,13 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type) type {
         }
 
         pub fn reset(tree: *Tree) void {
-            tree.table_mutable.reset();
-            tree.table_immutable.clear();
+            // TODO
+            // tree.table_mutable.reset();
+            // tree.table_immutable.clear();
             tree.manifest.reset();
 
             tree.compaction_table_immutable.reset();
             for (tree.compaction_table) |*compaction| compaction.reset();
-
-            if (tree.values_cache) |cache| cache.reset();
 
             tree.* = .{
                 .grid = tree.grid,
@@ -270,7 +269,6 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type) type {
                 .options = tree.options,
                 .table_mutable = tree.table_mutable,
                 .table_immutable = tree.table_immutable,
-                .values_cache = tree.values_cache,
                 .manifest = tree.manifest,
                 .compaction_table_immutable = tree.compaction_table_immutable,
                 .compaction_table = tree.compaction_table,
@@ -296,7 +294,7 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type) type {
             key: Key,
         ) void {
             // std.log.info("Looking up from levels...", .{});
-            assert(tree.lookup_snapshot_max >= snapshot);
+            assert(tree.lookup_snapshot_max.? >= snapshot);
 
             var index_block_count: u8 = 0;
             var index_block_addresses: [constants.lsm_levels]u64 = undefined;
@@ -832,7 +830,7 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type) type {
         pub fn compact_end(tree: *Tree) void {
             const state_old = tree.compaction_phase;
             tree.compaction_phase = .idle;
-            const compaction_beat = tree.compaction_op % constants.lsm_batch_multiple;
+            const compaction_beat = tree.compaction_op.? % constants.lsm_batch_multiple;
 
             // We still need to swap our tables even if we skip compaction for the first bar.
             if (state_old == .skipped_done and compaction_beat == constants.lsm_batch_multiple - 1) {
@@ -846,7 +844,6 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type) type {
             }
 
             // Only run at the end of each half-bar.
-            const compaction_beat = tree.compaction_op.? % constants.lsm_batch_multiple;
             const compacted_levels_odd = compaction_beat == constants.lsm_batch_multiple - 1;
             const compacted_levels_even = compaction_beat == half_bar_beat_count - 1;
             if (!compacted_levels_odd and !compacted_levels_even) return;
@@ -931,7 +928,7 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type) type {
         fn swap_mutable_and_immutable(tree: *Tree) void {
             assert(tree.table_immutable.mutability.immutable.flushed);
             // assert((tree.compaction_op + 1) % constants.lsm_batch_multiple == 0);
-            // assert(tree.compaction_op + 1 == tree.lookup_snapshot_max);
+            // assert(tree.compaction_op + 1 == tree.lookup_snapshot_max.?);
 
             // The immutable table must be visible to the next bar — setting its snapshot_min to
             // lookup_snapshot_max guarantees.
@@ -940,7 +937,7 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type) type {
             // bar, and now its snapshot_min matches the snapshot_min of the Compactions' output
             // tables.
             var current_table_mutable = tree.table_mutable;
-            current_table_mutable.make_immutable(tree.lookup_snapshot_max);
+            current_table_mutable.make_immutable(tree.lookup_snapshot_max.?);
 
             var current_table_immutable = tree.table_immutable;
             current_table_immutable.make_mutable();

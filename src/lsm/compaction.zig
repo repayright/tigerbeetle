@@ -79,7 +79,7 @@ pub fn CompactionType(
 
         pub const TableInfoA = union(enum) {
             immutable: TableMemory.Iterator,
-            disk: TableInfo,
+            disk: TableInfoReference,
         };
 
         pub const Context = struct {
@@ -230,8 +230,8 @@ pub fn CompactionType(
             compaction.table_builder.deinit(allocator);
             for (compaction.data_blocks) |data_block| allocator.free(data_block);
             allocator.free(compaction.index_block_a);
-            compaction.iterator_b.deinit(allocator);
-            compaction.iterator_a.deinit(allocator);
+            compaction.iterator_b.deinit();
+            compaction.iterator_a.deinit();
             allocator.free(compaction.immutable_values_in.ptr[0 .. 8192 * 64]);
         }
 
@@ -255,6 +255,9 @@ pub fn CompactionType(
 
                 .input_state = .remaining,
                 .state = .idle,
+
+                // TODO double check
+                .immutable_values_in = compaction.immutable_values_in.ptr[0 .. 8192 * 64],
 
                 .tracer_slot = null,
                 .iterator_tracer_slot = null,

@@ -21,7 +21,6 @@ pub fn CacheMap(
     comptime HashMapContextValue: type,
     comptime tombstone_from_key: fn (Key) callconv(.Inline) Value,
     comptime tombstone: fn (*const Value) callconv(.Inline) bool,
-    comptime name: [:0]const u8,
 ) type {
     const Cache = SetAssociativeCache(
         Key,
@@ -30,7 +29,6 @@ pub fn CacheMap(
         hash,
         equal,
         .{},
-        name,
     );
 
     const load_factor = 50;
@@ -61,10 +59,12 @@ pub fn CacheMap(
         last_upsert_caused_eviction: bool = undefined,
 
         // TODO: Make these params a struct
+        // TODO: Make it take a name param
         pub fn init(allocator: std.mem.Allocator, cache_value_count_max: u32, map_value_count_max: u32) !Self {
             var cache: Cache = try Cache.init(
                 allocator,
                 cache_value_count_max,
+                .{ .name = "todo name" },
             );
             errdefer cache.deinit(allocator);
 
