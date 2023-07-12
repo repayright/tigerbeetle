@@ -677,9 +677,9 @@ pub fn StateMachineType(
                 .lookup_accounts => self.execute_lookup_accounts(input, output),
                 .lookup_transfers => self.execute_lookup_transfers(input, output),
             };
-            std.log.info("Took {}ms to run groove ops 1", .{self.hack_time1 / 1000 / 1000});
-            std.log.info("Took {}ms to run groove ops 2", .{self.hack_time2 / 1000 / 1000});
-            std.log.info("Took {}ms to run groove ops 3", .{self.hack_time3 / 1000 / 1000});
+            // std.log.info("Took {}ms to run groove ops 1", .{self.hack_time1 / 1000 / 1000});
+            // std.log.info("Took {}ms to run groove ops 2", .{self.hack_time2 / 1000 / 1000});
+            // std.log.info("Took {}ms to run groove ops 3", .{self.hack_time3 / 1000 / 1000});
 
             tracer.end(
                 &self.tracer_slot,

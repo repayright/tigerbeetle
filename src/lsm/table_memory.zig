@@ -112,13 +112,12 @@ pub fn TableMemoryType(comptime Table: type) type {
         pub fn compact(table: *TableMemory) void {
             assert(table.mutability == .mutable);
 
-            var timer = std.time.Timer.start() catch unreachable;
-            // TODO, should just sort the last bucket, obvs
             table.value_context.buffers[table.value_context.buffers_count] = table.values[table.value_context.count_last..table.value_context.count];
             std.sort.sort(Value, table.value_context.buffers[table.value_context.buffers_count], {}, sort_values_by_key_in_ascending_order);
-            const r = timer.read();
-            std.log.info("Took {}ms to compact {} items", .{ r / 1000 / 1000, table.value_context.buffers[table.value_context.buffers_count].len });
+
             table.value_context.buffers_count += 1;
+
+            // TODO: Get rid of count_last
             table.value_context.count_last = table.value_context.count;
         }
 
@@ -165,7 +164,7 @@ pub fn TableMemoryType(comptime Table: type) type {
             var i: u32 = 0;
             while (i < table.value_context.buffers_count) : (i += 1) {
                 table.streams[i] = table.value_context.buffers[i];
-                std.log.info("Stream {} len {}", .{ i, table.streams[i].len });
+                // std.log.info("Stream {} len {}", .{ i, table.streams[i].len });
             }
 
             return Iterator.init(table, i, .ascending);

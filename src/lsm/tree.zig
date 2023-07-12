@@ -700,7 +700,6 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type) type {
                 range_b.tables.len + 1,
             });
 
-            std.log.info("STARTING IMMUTABLE COMPACTION", .{});
             tree.compaction_io_pending += 1;
             tree.compaction_table_immutable.start(.{
                 .grid = tree.grid,

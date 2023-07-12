@@ -1000,7 +1000,6 @@ pub fn GrooveType(
         }
 
         pub fn compact(groove: *Groove, callback: Callback, op: u64) void {
-            std.log.info("Um inside groove compact?", .{});
             // Start a compacting join operation.
             const Join = JoinType(.compacting);
             Join.start(groove, callback);

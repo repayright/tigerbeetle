@@ -6,6 +6,8 @@ const assert = std.debug.assert;
 const SetAssociativeCache = @import("set_associative_cache.zig").SetAssociativeCache;
 const ScopeCloseMode = @import("tree.zig").ScopeCloseMode;
 
+const max_ops = 3;
+
 /// A CacheMap is a hybrid between our SetAssociativeCache and a HashMap. The SetAssociativeCache
 /// sits on top and absorbs the majority of read / write requests. Below that, lives a HashMap.
 /// Should an insert() cause an eviction (which can happen either because the Key is the same,
@@ -53,8 +55,8 @@ pub fn CacheMap(
         scope_map: Map,
 
         op: u64 = 0,
-        ops_keys: [3][]Key,
-        op_keys_count: [3]u64,
+        ops_keys: [max_ops][]Key,
+        op_keys_count: [max_ops]u64,
 
         last_upsert_caused_eviction: bool = undefined,
 
@@ -78,8 +80,8 @@ pub fn CacheMap(
             try scope_map.ensureTotalCapacity(allocator, map_value_count_max);
             errdefer scope_map.deinit(allocator);
 
-            var ops_keys: [3][]Key = undefined;
-            var op_keys_count: [3]u64 = undefined;
+            var ops_keys: [max_ops][]Key = undefined;
+            var op_keys_count: [max_ops]u64 = undefined;
 
             for (ops_keys) |*op_keys, i| {
                 // TODO Sizing and freeing
@@ -225,8 +227,6 @@ pub fn CacheMap(
             var op_keys = self.ops_keys[op % self.ops_keys.len];
             var op_keys_count = self.op_keys_count[self.op % self.ops_keys.len];
 
-            const prev_len = self.map.count();
-
             var timer = std.time.Timer.start() catch unreachable;
             timer.reset();
 
@@ -235,11 +235,7 @@ pub fn CacheMap(
             }
             self.map.clearRetainingCapacity();
 
-            const time = timer.read();
-
             self.op_keys_count[self.op % self.ops_keys.len] = 0;
-
-            std.log.info("Finished cache_map compaction: from {} to {} - op {} - took {}us", .{ prev_len, self.map.count(), op, time / 1000 });
         }
     };
 }

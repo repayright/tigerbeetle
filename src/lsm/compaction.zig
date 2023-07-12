@@ -198,7 +198,7 @@ pub fn CompactionType(
 
             // TODO, only if we're for an immutable table. This holds the values yielded from
             // the iterator.
-            var immutable_values_in = try allocator.alloc(Value, 8192);
+            var immutable_values_in = try allocator.alloc(Value, 8192*64);
             errdefer allocator.free(immutable_values_in);
 
             return Compaction{
@@ -233,7 +233,7 @@ pub fn CompactionType(
             allocator.free(compaction.index_block_b);
             compaction.iterator_b.deinit();
             compaction.iterator_a.deinit();
-            allocator.free(compaction.immutable_values_in.ptr[0 .. 8192]);
+            allocator.free(compaction.immutable_values_in.ptr[0 .. 8192*64]);
         }
 
         pub fn reset(compaction: *Compaction) void {
@@ -258,7 +258,7 @@ pub fn CompactionType(
                 .state = .idle,
 
                 // TODO double check
-                .immutable_values_in = compaction.immutable_values_in.ptr[0 .. 8192],
+                .immutable_values_in = compaction.immutable_values_in.ptr[0 .. 8192*64],
 
                 .tracer_slot = null,
                 .iterator_tracer_slot = null,
@@ -288,9 +288,8 @@ pub fn CompactionType(
         }
 
         fn fill_immutable_values(compaction: *Compaction) void {
-            std.log.info("{s}: Entering fill immutable values...", .{compaction.tree_name});
             // Reset our slice
-            compaction.immutable_values_in = compaction.immutable_values_in.ptr[0 .. 8192];
+            compaction.immutable_values_in = compaction.immutable_values_in.ptr[0 .. 8192*64];
 
             var i: u32 = 0;
             var immutable_values_in = compaction.immutable_values_in;
@@ -306,10 +305,9 @@ pub fn CompactionType(
                     break;
                 }
             } else {
-                std.log.info("{s}:Set to exhausted...", .{compaction.tree_name});
                 compaction.immutable_values_exhausted = true;
             }
-            std.log.info("{s}: We just filled {} values from our iterator...", .{ compaction.tree_name, i });
+            // std.log.debug("{s}: We just filled {} values from our iterator...", .{ compaction.tree_name, i });
             compaction.immutable_values_in = compaction.immutable_values_in[0..i];
         }
 
@@ -365,7 +363,6 @@ pub fn CompactionType(
             );
             assert(drop_tombstones or context.level_b < constants.lsm_levels - 1);
 
-            std.log.info("SETTING COMPACTION", .{});
             compaction.* = .{
                 .tree_name = compaction.tree_name,
 
@@ -866,7 +863,6 @@ pub fn CompactionType(
                 .exhausted => {
                     compaction.state = .next_tick;
                     compaction.context.grid.on_next_tick(done_on_next_tick, &compaction.next_tick);
-                    std.log.info("{s}: COMPACTION exhausted FINISH CALLED", .{compaction.tree_name});
                 },
             }
         }
