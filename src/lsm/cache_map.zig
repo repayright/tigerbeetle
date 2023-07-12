@@ -315,8 +315,6 @@ test "cache_map: unit" {
                 return a.tombstone;
             }
         }.tombstone,
-
-        @typeName(Object),
     );
 
     const allocator = testing.allocator;

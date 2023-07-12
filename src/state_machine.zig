@@ -742,8 +742,7 @@ pub fn StateMachineType(
                 .create_transfers => {
                     self.forest.grooves.accounts_mutable.scope_open();
                     self.forest.grooves.transfers.scope_open();
-                    // TODO
-                    // self.forest.grooves.posted
+                    self.forest.grooves.posted.scope_open();
                 },
                 else => unreachable,
             }
@@ -760,8 +759,7 @@ pub fn StateMachineType(
                 .create_transfers => {
                     self.forest.grooves.accounts_mutable.scope_close(data);
                     self.forest.grooves.transfers.scope_close(data);
-                    // TODO
-                    // self.forest.grooves.posted
+                    self.forest.grooves.posted.scope_close(data);
                 },
                 else => unreachable,
             }

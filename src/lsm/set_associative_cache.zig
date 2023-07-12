@@ -417,6 +417,13 @@ fn set_associative_cache_test(
     );
 
     return struct {
+        // No-op eviction handler for upsert_index.
+        fn on_eviction(cache: *SAC, value: *const u64, updated: bool) void {
+            _ = cache;
+            _ = value;
+            _ = updated;
+        }
+
         fn run() !void {
             if (log) SAC.inspect();
 
@@ -435,7 +442,7 @@ fn set_associative_cache_test(
                     try expectEqual(i, sac.clocks.get(0));
 
                     const key = i * sac.sets;
-                    sac.upsert(&key);
+                    _ = sac.upsert_index(&key, on_eviction);
                     try expect(sac.counts.get(i) == 1);
                     try expectEqual(key, sac.get(key).?.*);
                     try expect(sac.counts.get(i) == 2);
@@ -448,7 +455,7 @@ fn set_associative_cache_test(
             // Insert another element into the first set, causing key 0 to be evicted.
             {
                 const key = layout.ways * sac.sets;
-                sac.upsert(&key);
+                _ = sac.upsert_index(&key, on_eviction);
                 try expect(sac.counts.get(0) == 1);
                 try expectEqual(key, sac.get(key).?.*);
                 try expect(sac.counts.get(0) == 2);
@@ -489,7 +496,7 @@ fn set_associative_cache_test(
                     try expectEqual(i, sac.clocks.get(0));
 
                     const key = i * sac.sets;
-                    sac.upsert(&key);
+                    _ = sac.upsert_index(&key, on_eviction);
                     try expect(sac.counts.get(i) == 1);
                     var j: usize = 2;
                     while (j <= math.maxInt(SAC.Count)) : (j += 1) {
@@ -507,7 +514,7 @@ fn set_associative_cache_test(
             // Insert another element into the first set, causing key 0 to be evicted.
             {
                 const key = layout.ways * sac.sets;
-                sac.upsert(&key);
+                _ = sac.upsert_index(&key, on_eviction);
                 try expect(sac.counts.get(0) == 1);
                 try expectEqual(key, sac.get(key).?.*);
                 try expect(sac.counts.get(0) == 2);

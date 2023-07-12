@@ -69,9 +69,10 @@ pub fn StateMachineType(
                 options.lsm_forest_node_count,
                 .{
                     .things = .{
+                        .cache_entries_max = 2048,
                         .prefetch_entries_max = 1,
-                        .tree_options_object = .{ .cache_entries_max = 2048 },
-                        .tree_options_id = .{ .cache_entries_max = 2048 },
+                        .tree_options_object = .{ },
+                        .tree_options_id = .{ },
                         .tree_options_index = .{ .value = .{} },
                     },
                 },
