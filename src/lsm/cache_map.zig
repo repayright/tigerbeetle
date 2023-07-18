@@ -264,6 +264,15 @@ pub fn CacheMap(
 
             self.op_keys_count[self.op % self.ops_keys.len] = 0;
         }
+
+        pub fn reset(self: *Self) void {
+            self.cache.reset();
+            self.map.clearRetainingCapacity();
+
+            for (self.op_keys_count) |*op_key_count| {
+                op_key_count.* = 0;
+            }
+        }
     };
 }
 

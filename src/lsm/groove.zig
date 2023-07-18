@@ -502,7 +502,7 @@ pub fn GrooveType(
             errdefer allocator.destroy(objects_cache);
 
             objects_cache.* = try ObjectsCache.init(allocator, .{
-                .cache_value_count_max = options.cache_entries_max,
+                .cache_value_count_max = 2048,
 
                 // TODO: Sizing here
                 .map_value_count_max = options.prefetch_entries_max * 2,
@@ -599,8 +599,7 @@ pub fn GrooveType(
             if (has_id) groove.ids.reset();
 
             groove.prefetch_ids.clearRetainingCapacity();
-            // groove.prefetch_objects.clearRetainingCapacity();
-            // TODO: Reset for objects cache...
+            groove.objects_cache.reset();
 
             groove.* = .{
                 .objects = groove.objects,
@@ -619,6 +618,9 @@ pub fn GrooveType(
         /// Must be called directly before the state machine begins queuing ids for prefetch.
         /// When `snapshot` is null, prefetch from the current snapshot.
         pub fn prefetch_setup(groove: *Groove, snapshot: ?u64) void {
+            // TODO: Snapshot path not tested....
+            assert(snapshot == null);
+
             // We may query the input tables of an ongoing compaction, but must not query the
             // output tables until the compaction is complete. (Until then, the output tables may
             // be in the manifest but not yet on disk).
@@ -636,22 +638,22 @@ pub fn GrooveType(
             // }
 
             groove.prefetch_snapshot = snapshot_target;
-            // assert(groove.prefetch_objects.count() == 0);
+            std.log.info("Prefetch setup called, count is {}", .{groove.prefetch_ids.count()});
             assert(groove.prefetch_ids.count() == 0);
         }
 
         /// This must be called by the state machine for every key to be prefetched.
         /// We tolerate duplicate IDs enqueued by the state machine.
         /// For example, if all unique operations require the same two dependencies.
-        pub inline fn prefetch_enqueue(groove: *Groove, key: PrimaryKey, lookup_hint: enum { negative_lookup, positive_lookup }) void {
-            _ = lookup_hint;
+        pub inline fn prefetch_enqueue(groove: *Groove, key: PrimaryKey) void {
             if (!groove.objects_cache.has(key)) {
+                std.log.info("prefetch_enqueue called, because not has", .{});
                 groove.prefetch_ids.putAssumeCapacity(key, {});
             }
         }
 
         /// Ensure the objects corresponding to all ids enqueued with prefetch_enqueue() are
-        /// available in `prefetch_objects`.
+        /// available in `objects_cache`.
         pub fn prefetch(
             groove: *Groove,
             callback: fn (*PrefetchContext) void,
@@ -709,6 +711,7 @@ pub fn GrooveType(
 
             fn finish(context: *PrefetchContext) void {
                 assert(context.workers_busy == 0);
+                std.log.info("prefetch worker finish", .{});
 
                 assert(context.id_iterator.next() == null);
                 context.groove.prefetch_ids.clearRetainingCapacity();
@@ -757,7 +760,7 @@ pub fn GrooveType(
                 }
 
                 // If not in the LSM tree's cache, the object must be read from disk and added
-                // to the auxiliary prefetch_objects hash map.
+                // to our prefetch_objects cache map.
                 worker.context.groove.ids.lookup_from_levels(
                     lookup_id_callback,
                     &worker.lookup.id,
@@ -804,7 +807,6 @@ pub fn GrooveType(
                 // TODO: Revisit - conflict
                 if (result) |object| {
                     assert(!ObjectTreeHelpers(Object).tombstone(object));
-                    // worker.context.groove.prefetch_objects.putAssumeCapacityNoClobber(object.*, {});
                     worker.context.groove.objects_cache.upsert(object);
                 }
 

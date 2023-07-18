@@ -71,8 +71,8 @@ pub fn StateMachineType(
                     .things = .{
                         .cache_entries_max = 2048,
                         .prefetch_entries_max = 1,
-                        .tree_options_object = .{ },
-                        .tree_options_id = .{ },
+                        .tree_options_object = .{},
+                        .tree_options_id = .{},
                         .tree_options_index = .{ .value = .{} },
                     },
                 },
@@ -139,7 +139,7 @@ pub fn StateMachineType(
 
             // TODO(Snapshots) Pass in the target snapshot.
             state_machine.forest.grooves.things.prefetch_setup(null);
-            state_machine.forest.grooves.things.prefetch_enqueue(op, .negative_lookup);
+            state_machine.forest.grooves.things.prefetch_enqueue(op);
             state_machine.forest.grooves.things.prefetch(prefetch_callback, &state_machine.prefetch_context);
         }
 

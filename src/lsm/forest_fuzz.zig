@@ -243,7 +243,7 @@ const Environment = struct {
             fn prefetch_start(getter: *@This()) void {
                 const groove = getter._groove_immutable;
                 groove.prefetch_setup(null);
-                groove.prefetch_enqueue(getter._id, .positive_lookup);
+                groove.prefetch_enqueue(getter._id);
                 groove.prefetch(@This().prefetch_callback_immuttable, &getter.prefetch_context_immutable);
             }
 
@@ -253,7 +253,7 @@ const Environment = struct {
                 groove.prefetch_setup(null);
 
                 if (getter._groove_immutable.get(getter._id)) |immut| {
-                    groove.prefetch_enqueue(immut.timestamp, .negative_lookup);
+                    groove.prefetch_enqueue(immut.timestamp);
                 }
 
                 groove.prefetch(@This().prefetch_callback_mutable, &getter.prefetch_context_mutable);

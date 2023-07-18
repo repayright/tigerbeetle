@@ -28,4 +28,4 @@ echo "Benchmarking..."
 ./comp/benchmark --addresses ${PORT} "$@" &
 
 echo "Starting replica..."
-./comp/tigerbeetle-main start --cache-grid=128MB --addresses=${PORT} "$FILE"
+./tigerbeetle start --cache-grid=128MB --addresses=${PORT} "$FILE"

@@ -486,7 +486,7 @@ pub fn StateMachineType(
 
         fn prefetch_create_accounts(self: *StateMachine, accounts: []const Account) void {
             for (accounts) |*a| {
-                self.forest.grooves.accounts_immutable.prefetch_enqueue(a.id, .negative_lookup);
+                self.forest.grooves.accounts_immutable.prefetch_enqueue(a.id);
             }
             self.forest.grooves.accounts_immutable.prefetch(
                 prefetch_create_accounts_immutable_callback,
@@ -518,10 +518,10 @@ pub fn StateMachineType(
 
         fn prefetch_create_transfers(self: *StateMachine, transfers: []const Transfer) void {
             for (transfers) |*t| {
-                self.forest.grooves.transfers.prefetch_enqueue(t.id, .negative_lookup);
+                self.forest.grooves.transfers.prefetch_enqueue(t.id);
 
                 if (t.flags.post_pending_transfer or t.flags.void_pending_transfer) {
-                    self.forest.grooves.transfers.prefetch_enqueue(t.pending_id, .positive_lookup);
+                    self.forest.grooves.transfers.prefetch_enqueue(t.pending_id);
                 }
             }
 
@@ -538,12 +538,12 @@ pub fn StateMachineType(
             for (transfers) |*t| {
                 if (t.flags.post_pending_transfer or t.flags.void_pending_transfer) {
                     if (self.forest.grooves.transfers.get(t.pending_id)) |p| {
-                        self.forest.grooves.accounts_immutable.prefetch_enqueue(p.debit_account_id, .positive_lookup);
-                        self.forest.grooves.accounts_immutable.prefetch_enqueue(p.credit_account_id, .positive_lookup);
+                        self.forest.grooves.accounts_immutable.prefetch_enqueue(p.debit_account_id);
+                        self.forest.grooves.accounts_immutable.prefetch_enqueue(p.credit_account_id);
                     }
                 } else {
-                    self.forest.grooves.accounts_immutable.prefetch_enqueue(t.debit_account_id, .positive_lookup);
-                    self.forest.grooves.accounts_immutable.prefetch_enqueue(t.credit_account_id, .positive_lookup);
+                    self.forest.grooves.accounts_immutable.prefetch_enqueue(t.debit_account_id);
+                    self.forest.grooves.accounts_immutable.prefetch_enqueue(t.credit_account_id);
                 }
             }
 
@@ -561,22 +561,22 @@ pub fn StateMachineType(
                 if (t.flags.post_pending_transfer or t.flags.void_pending_transfer) {
                     if (self.forest.grooves.transfers.get(t.pending_id)) |p| {
                         if (self.forest.grooves.accounts_immutable.get(p.debit_account_id)) |dr_immut| {
-                            self.forest.grooves.accounts_mutable.prefetch_enqueue(dr_immut.timestamp, .positive_lookup);
+                            self.forest.grooves.accounts_mutable.prefetch_enqueue(dr_immut.timestamp);
                         }
                         if (self.forest.grooves.accounts_immutable.get(p.credit_account_id)) |cr_immut| {
-                            self.forest.grooves.accounts_mutable.prefetch_enqueue(cr_immut.timestamp, .positive_lookup);
+                            self.forest.grooves.accounts_mutable.prefetch_enqueue(cr_immut.timestamp);
                         }
 
                         // This prefetch isn't run yet, but enqueue it here as well to save an extra
                         // iteration over transfers.
-                        self.forest.grooves.posted.prefetch_enqueue(p.timestamp, .positive_lookup);
+                        self.forest.grooves.posted.prefetch_enqueue(p.timestamp);
                     }
                 } else {
                     if (self.forest.grooves.accounts_immutable.get(t.debit_account_id)) |dr_immut| {
-                        self.forest.grooves.accounts_mutable.prefetch_enqueue(dr_immut.timestamp, .positive_lookup);
+                        self.forest.grooves.accounts_mutable.prefetch_enqueue(dr_immut.timestamp);
                     }
                     if (self.forest.grooves.accounts_immutable.get(t.credit_account_id)) |cr_immut| {
-                        self.forest.grooves.accounts_mutable.prefetch_enqueue(cr_immut.timestamp, .positive_lookup);
+                        self.forest.grooves.accounts_mutable.prefetch_enqueue(cr_immut.timestamp);
                     }
                 }
             }
@@ -602,7 +602,7 @@ pub fn StateMachineType(
         fn prefetch_lookup_accounts(self: *StateMachine, ids: []const u128) void {
             // Function call overhead? Prefetch multiple in one go?
             for (ids) |id| {
-                self.forest.grooves.accounts_immutable.prefetch_enqueue(id, .positive_lookup);
+                self.forest.grooves.accounts_immutable.prefetch_enqueue(id);
             }
 
             self.forest.grooves.accounts_immutable.prefetch(
@@ -617,7 +617,7 @@ pub fn StateMachineType(
             const ids = mem.bytesAsSlice(Event(.lookup_accounts), self.prefetch_input.?);
             for (ids) |id| {
                 if (self.forest.grooves.accounts_immutable.get(id)) |immut| {
-                    self.forest.grooves.accounts_mutable.prefetch_enqueue(immut.timestamp, .positive_lookup);
+                    self.forest.grooves.accounts_mutable.prefetch_enqueue(immut.timestamp);
                 }
             }
 
@@ -635,7 +635,7 @@ pub fn StateMachineType(
 
         fn prefetch_lookup_transfers(self: *StateMachine, ids: []const u128) void {
             for (ids) |id| {
-                self.forest.grooves.transfers.prefetch_enqueue(id, .positive_lookup);
+                self.forest.grooves.transfers.prefetch_enqueue(id);
             }
 
             self.forest.grooves.transfers.prefetch(
