@@ -5,7 +5,7 @@ const mem = std.mem;
 
 const Direction = @import("direction.zig").Direction;
 
-pub fn KWayMergeIterator(
+pub fn KWayMergeIteratorType(
     comptime Context: type,
     comptime Key: type,
     comptime Value: type,
@@ -14,6 +14,9 @@ pub fn KWayMergeIterator(
     comptime k_max: u32,
     /// Peek the next key in the stream identified by stream_index.
     /// For example, peek(stream_index=2) returns user_streams[2][0].
+    /// Returns Drained if the stream was consumed and
+    /// must be refilled before calling peek() again.
+    /// Returns Empty if the stream was fully consumed and reached the end.
     comptime stream_peek: fn (
         context: *const Context,
         stream_index: u32,
@@ -86,8 +89,8 @@ pub fn KWayMergeIterator(
             return it.k == 0;
         }
 
-        pub fn pop(it: *Self) ?Value {
-            while (it.pop_internal()) |value| {
+        pub fn pop(it: *Self) error{Drained}!?Value {
+            while (try it.pop_internal()) |value| {
                 const key = key_from_value(&value);
                 if (it.previous_key_popped) |previous| {
                     switch (compare_keys(previous, key)) {
@@ -104,11 +107,8 @@ pub fn KWayMergeIterator(
             return null;
         }
 
-        fn pop_internal(it: *Self) ?Value {
-            if (it.k == 0)  {
-                std.log.info("k == 0 top", .{});
-                return null;
-            }
+        fn pop_internal(it: *Self) error{Drained}!?Value {
+            if (it.k == 0) return null;
 
             // We update the heap prior to removing the value from the stream. If we updated after
             // stream_pop() instead, when stream_peek() returns Drained we would be unable to order
@@ -117,19 +117,15 @@ pub fn KWayMergeIterator(
                 it.keys[0] = key;
                 it.down_heap();
             } else |err| switch (err) {
-                error.Drained => {
-                    std.log.info("Drained, how", .{});
-                    return null;
-                },
+                error.Drained => return error.Drained,
                 error.Empty => {
                     it.swap(0, it.k - 1);
                     it.k -= 1;
                     it.down_heap();
                 },
             }
-            if (it.k == 0)  {
-                return null;
-            }
+            if (it.k == 0) return null;
+
             const root = it.streams[0];
             const value = stream_pop(it.context, root);
 
@@ -233,7 +229,7 @@ fn TestContext(comptime k_max: u32) type {
         }
 
         fn stream_peek(context: *const Self, stream_index: u32) error{ Empty, Drained }!u32 {
-            // TODO: test for Drained somehow as well
+            // TODO: test for Drained somehow as well.
             const stream = context.streams[stream_index];
             if (stream.len == 0) return error.Empty;
             return stream[0].key;
@@ -248,7 +244,7 @@ fn TestContext(comptime k_max: u32) type {
         fn stream_precedence(context: *const Self, a: u32, b: u32) bool {
             _ = context;
 
-            // Higher streams have higher precedence
+            // Higher streams have higher precedence.
             return a > b;
         }
 
@@ -257,7 +253,7 @@ fn TestContext(comptime k_max: u32) type {
             streams_keys: []const []const u32,
             expect: []const Value,
         ) !void {
-            const KWay = KWayMergeIterator(
+            const KWay = KWayMergeIteratorType(
                 Self,
                 u32,
                 Value,
@@ -288,7 +284,7 @@ fn TestContext(comptime k_max: u32) type {
             var context: Self = .{ .streams = streams };
             var kway = KWay.init(&context, @intCast(u32, streams_keys.len), direction);
 
-            while (kway.pop()) |value| {
+            while (try kway.pop()) |value| {
                 try actual.append(value);
             }
 
@@ -426,28 +422,6 @@ test "k_way_merge: unit" {
             .{ .key = 4, .version = 0 },
             .{ .key = 3, .version = 0 },
             .{ .key = 0, .version = 0 },
-        },
-    );
-    try TestContext(3).merge(
-        .ascending,
-        &[_][]const u32{
-            &[_]u32{ 0, 1, 2, 3 },
-            &[_]u32{ 4, 5, 6, 7 },
-            &[_]u32{ 8, 9, 10, 11 },
-        },
-        &[_]TestContext(3).Value{
-            .{ .key = 0, .version = 0 },
-            .{ .key = 1, .version = 0 },
-            .{ .key = 2, .version = 0 },
-            .{ .key = 3, .version = 0 },
-            .{ .key = 4, .version = 1 },
-            .{ .key = 5, .version = 1 },
-            .{ .key = 6, .version = 1 },
-            .{ .key = 7, .version = 1 },
-            .{ .key = 8, .version = 2 },
-            .{ .key = 9, .version = 2 },
-            .{ .key = 10, .version = 2 },
-            .{ .key = 11, .version = 2 },
         },
     );
     try TestContext(3).merge(

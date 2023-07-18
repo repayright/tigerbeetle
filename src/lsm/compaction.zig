@@ -173,10 +173,10 @@ pub fn CompactionType(
         iterator_tracer_slot: ?tracer.SpanStart,
 
         pub fn init(allocator: Allocator, tree_name: []const u8) !Compaction {
-            var iterator_a = try TableDataIterator.init();
+            var iterator_a = TableDataIterator.init();
             errdefer iterator_a.deinit();
 
-            var iterator_b = try LevelTableValueBlockIterator.init();
+            var iterator_b = LevelTableValueBlockIterator.init();
             errdefer iterator_b.deinit();
 
             const index_block_a = try allocate_block(allocator);
@@ -421,6 +421,7 @@ pub fn CompactionType(
                     .snapshot = context.op_min,
                     .tables = compaction.context.range_b.tables.constSlice(),
                     .index_block = compaction.index_block_b,
+                    .direction = .ascending,
                 });
 
                 switch (context.table_info_a) {
@@ -429,7 +430,7 @@ pub fn CompactionType(
                     },
                     .disk => |table_ref| {
                         compaction.state = .iterator_init_a;
-                        compaction.context.grid.read_block(
+                        compaction.context.grid.read_block_from_cache_or_storage(
                             on_iterator_init_a,
                             &compaction.read,
                             table_ref.table_info.address,
@@ -454,6 +455,7 @@ pub fn CompactionType(
                 .grid = compaction.context.grid,
                 .addresses = index_schema_a.data_addresses_used(compaction.index_block_a),
                 .checksums = index_schema_a.data_checksums_used(compaction.index_block_a),
+                .direction = .ascending,
             });
             compaction.release_table_blocks(compaction.index_block_a);
             compaction.state = .compacting;

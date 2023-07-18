@@ -34,10 +34,13 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - id: calculate_version
+      # The below is not a typo. The package yq installs the xq we need, not
+      # to be confused with the package xq which is something different.
       run: |
+        pip install yq && \
         echo "version=$(./.github/ci/next_version.sh)" >> "$GITHUB_OUTPUT"
   
-  scheduled_release:
+  draft_release:
     runs-on: ubuntu-latest
     needs: [version]
     steps:
@@ -47,6 +50,7 @@ jobs:
       - run: |
           hub release create \
             --prerelease \
+            --draft \
             --message "$(./.github/ci/generate_release_message.sh ${{ needs.version.outputs.version }})" \
             -t ${{ github.sha }} \
             "${{ needs.version.outputs.version }}"
@@ -59,7 +63,7 @@ jobs:
   # don't trigger this, so we call it here
   # https://docs.github.com/en/actions/security-guides/automatic-token-authentication#using-the-github_token-in-a-workflow
   release:
-    needs: [scheduled_release, version]
+    needs: [draft_release, version]
     uses: ./.github/workflows/release_artifacts.yml
     with:
       version: ${{needs.version.outputs.version}}
@@ -71,4 +75,30 @@ jobs:
       MAVEN_CENTRAL_TOKEN: ${{ secrets.MAVEN_CENTRAL_TOKEN }}
       MAVEN_GPG_SECRET_KEY_PASSWORD: ${{ secrets.MAVEN_GPG_SECRET_KEY_PASSWORD }}
       TIGERBEETLE_GO_DEPLOY_KEY: ${{ secrets.TIGERBEETLE_GO_DEPLOY_KEY }}
-      SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}
+
+  finalize_release:
+    runs-on: ubuntu-latest
+    needs: [release, version]
+    steps:
+      - uses: actions/checkout@v3
+
+      - run: |
+          hub release edit \
+            --draft=false \
+            -m "" \
+            "${{ needs.version.outputs.version }}"
+
+        # Propagate token into environment
+        env:
+          EDITOR: vi
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  alert_failure:
+    runs-on: ubuntu-latest
+    needs: [version, draft_release, release, finalize_release]
+    if: ${{ always() && contains(needs.*.result, 'failure') }}
+    steps:
+      - name: Alert if anything failed
+        run: |
+          export URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" && \
+          curl -d "text=Release process for ${{ inputs.version }} failed! See ${URL} for more information." -d "channel=C04RWHT9EP5" -H "Authorization: Bearer ${{ secrets.SLACK_TOKEN }}" -X POST https://slack.com/api/chat.postMessage
