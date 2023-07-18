@@ -11,7 +11,7 @@ const constants = @import("../constants.zig");
 const div_ceil = @import("../stdx.zig").div_ceil;
 const verify = constants.verify;
 
-const tracer = @import("../tracer.zig");
+// const tracer = @import("../tracer.zig");
 
 pub const Layout = struct {
     ways: u64 = 16,
@@ -206,19 +206,19 @@ pub fn SetAssociativeCache(
             const set = self.associate(key);
             if (self.search(set, key)) |way| {
                 self.hits += 1;
-                tracer.plot(
-                    .{ .cache_hits = .{ .cache_name = self.name } },
-                    @intToFloat(f64, self.hits),
-                );
+                // tracer.plot(
+                //     .{ .cache_hits = .{ .cache_name = self.name } },
+                //     @intToFloat(f64, self.hits),
+                // );
                 const count = self.counts.get(set.offset + way);
                 self.counts.set(set.offset + way, count +| 1);
                 return set.offset + way;
             } else {
                 self.misses += 1;
-                tracer.plot(
-                    .{ .cache_misses = .{ .cache_name = self.name } },
-                    @intToFloat(f64, self.misses),
-                );
+                // tracer.plot(
+                //     .{ .cache_misses = .{ .cache_name = self.name } },
+                //     @intToFloat(f64, self.misses),
+                // );
                 return null;
             }
         }
@@ -453,6 +453,7 @@ fn set_associative_cache_test(
             if (log) sac.associate(0).inspect(sac);
 
             // Insert another element into the first set, causing key 0 to be evicted.
+            // TODO: Test this using on_evicted above.
             {
                 const key = layout.ways * sac.sets;
                 _ = sac.upsert_index(&key, on_eviction);

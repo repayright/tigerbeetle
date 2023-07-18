@@ -233,7 +233,7 @@ pub fn CompactionType(
             allocator.free(compaction.index_block_b);
             compaction.iterator_b.deinit();
             compaction.iterator_a.deinit();
-            allocator.free(compaction.immutable_values_in.ptr[0 .. 8192]);
+            allocator.free(compaction.immutable_values_in.ptr[0..8192]);
         }
 
         pub fn reset(compaction: *Compaction) void {
@@ -258,7 +258,7 @@ pub fn CompactionType(
                 .state = .idle,
 
                 // TODO double check
-                .immutable_values_in = compaction.immutable_values_in.ptr[0 .. 8192],
+                .immutable_values_in = compaction.immutable_values_in.ptr[0..8192],
 
                 .tracer_slot = null,
                 .iterator_tracer_slot = null,
@@ -289,18 +289,12 @@ pub fn CompactionType(
 
         fn fill_immutable_values(compaction: *Compaction) void {
             // Reset our slice
-            compaction.immutable_values_in = compaction.immutable_values_in.ptr[0 .. 8192];
+            compaction.immutable_values_in = compaction.immutable_values_in.ptr[0..8192];
 
             var i: u32 = 0;
             var immutable_values_in = compaction.immutable_values_in;
             var iterator = &compaction.context.table_info_a.immutable;
-            while (iterator.pop()) |value| : (i += 1) {
-                // TODO: Not needed...?
-                // std.log.info("Popped: {}", .{value});
-                // if (i > 0 and compare_keys(key_from_value(&immutable_values_in[i - 1]), key_from_value(&value)) == .eq) {
-                //     i -= 1;
-                // }
-
+            while (iterator.pop() catch null) |value| : (i += 1) {
                 immutable_values_in[i] = value;
                 if (i == compaction.immutable_values_in.len - 1) {
                     break;

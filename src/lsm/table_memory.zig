@@ -7,7 +7,7 @@ const constants = @import("../constants.zig");
 const div_ceil = @import("../stdx.zig").div_ceil;
 const binary_search = @import("binary_search.zig");
 const snapshot_latest = @import("tree.zig").snapshot_latest;
-const KWayMergeIterator = @import("k_way_merge.zig").KWayMergeIterator;
+const KWayMergeIteratorType = @import("k_way_merge.zig").KWayMergeIteratorType;
 
 pub fn TableMemoryType(comptime Table: type) type {
     const Key = Table.Key;
@@ -60,7 +60,7 @@ pub fn TableMemoryType(comptime Table: type) type {
             return a > b;
         }
 
-        pub const Iterator = KWayMergeIterator(
+        pub const Iterator = KWayMergeIteratorType(
             TableMemory,
             Key,
             Value,

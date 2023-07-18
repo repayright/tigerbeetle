@@ -1,4 +1,5 @@
 const std = @import("std");
+const constants = @import("../constants.zig");
 
 const stdx = @import("../stdx.zig");
 const assert = std.debug.assert;
@@ -6,6 +7,8 @@ const assert = std.debug.assert;
 const SetAssociativeCache = @import("set_associative_cache.zig").SetAssociativeCache;
 const ScopeCloseMode = @import("tree.zig").ScopeCloseMode;
 
+/// The CacheMap needs to stay consistent until data has left the immutable table and
+/// been persisted to level 0.
 const max_ops = 3;
 
 /// A CacheMap is a hybrid between our SetAssociativeCache and a HashMap. The SetAssociativeCache
@@ -13,7 +16,7 @@ const max_ops = 3;
 /// Should an insert() cause an eviction (which can happen either because the Key is the same,
 /// or because our Way is full), the evicted value is caught and put in the HashMap.
 ///
-/// Cache invalidation for the HashMap is then handled out of band (TODO!)
+/// Cache invalidation for the HashMap is then handled by `compact`.
 pub fn CacheMap(
     comptime Key: type,
     comptime Value: type,
@@ -35,7 +38,7 @@ pub fn CacheMap(
 
     const load_factor = 50;
     // TODO: Should be stdx when merged
-    const Map = std.HashMapUnmanaged(
+    const Map = stdx.HashMapUnmanaged(
         Value,
         void,
         HashMapContextValue,
@@ -48,8 +51,15 @@ pub fn CacheMap(
         pub const Cache = Cache;
         pub const Map = Map;
 
+        pub const CacheMapOptions = struct {
+            cache_value_count_max: u32,
+            map_value_count_max: u32,
+            name: []const u8,
+        };
+
         cache: Cache,
         map: Map,
+        swap_map: Map,
 
         scope_is_active: bool = false,
         scope_map: Map,
@@ -60,38 +70,46 @@ pub fn CacheMap(
 
         last_upsert_caused_eviction: bool = undefined,
 
-        // TODO: Make these params a struct
-        // TODO: Make it take a name param
-        pub fn init(allocator: std.mem.Allocator, cache_value_count_max: u32, map_value_count_max: u32) !Self {
+        pub fn init(allocator: std.mem.Allocator, options: CacheMapOptions) !Self {
             var cache: Cache = try Cache.init(
                 allocator,
-                cache_value_count_max,
-                .{ .name = "todo name" },
+                options.cache_value_count_max,
+                .{ .name = options.name },
             );
             errdefer cache.deinit(allocator);
 
             var map: Map = .{};
-            // x2 for load factor
-            try map.ensureTotalCapacity(allocator, map_value_count_max);
+            try map.ensureTotalCapacity(allocator, options.map_value_count_max);
             errdefer map.deinit(allocator);
 
-            // TODO: Capacity
+            var swap_map: Map = .{};
+            try swap_map.ensureTotalCapacity(allocator, options.map_value_count_max);
+            errdefer swap_map.deinit(allocator);
+
+            // Scopes are limited to a single beat, so the maximum number of entries in our
+            // scope_map is options.map_value_count_max divided by lsm_batch_multiple.
+            // TODO: Don't like pulling in constants and making this non-pure
+            std.log.info("Hmmm: {}", .{options.map_value_count_max});
+            const scope_map_capacity = 20000; //@divExact(
+            // options.map_value_count_max,
+            // constants.lsm_batch_multiple,
+            // );
             var scope_map: Map = .{};
-            try scope_map.ensureTotalCapacity(allocator, map_value_count_max);
+            try scope_map.ensureTotalCapacity(allocator, scope_map_capacity);
             errdefer scope_map.deinit(allocator);
 
             var ops_keys: [max_ops][]Key = undefined;
             var op_keys_count: [max_ops]u64 = undefined;
 
             for (ops_keys) |*op_keys, i| {
-                // TODO Sizing and freeing
-                op_keys.* = try allocator.alloc(Key, map_value_count_max);
+                op_keys.* = try allocator.alloc(Key, options.map_value_count_max);
                 op_keys_count[i] = 0;
             }
 
             return Self{
                 .cache = cache,
                 .map = map,
+                .swap_map = swap_map,
                 .scope_map = scope_map,
                 .ops_keys = ops_keys,
                 .op_keys_count = op_keys_count,
@@ -224,16 +242,25 @@ pub fn CacheMap(
 
         /// Remove any entries in our map that are older than `op`
         pub fn compact(self: *Self, op: u64) void {
+            assert(!self.scope_is_active);
+
             var op_keys = self.ops_keys[op % self.ops_keys.len];
             var op_keys_count = self.op_keys_count[self.op % self.ops_keys.len];
-
-            var timer = std.time.Timer.start() catch unreachable;
-            timer.reset();
 
             for (op_keys[0..op_keys_count]) |key| {
                 _ = self.map.remove(tombstone_from_key(key));
             }
-            self.map.clearRetainingCapacity();
+
+            if (self.op % self.ops_keys.len == 0) {
+                self.swap_map.clearRetainingCapacity();
+                var it = self.map.keyIterator();
+                while (it.next()) |key| {
+                    self.swap_map.putAssumeCapacity(key.*, {});
+                }
+                const old_map = self.map;
+                self.map = self.swap_map;
+                self.swap_map = old_map;
+            }
 
             self.op_keys_count[self.op % self.ops_keys.len] = 0;
         }

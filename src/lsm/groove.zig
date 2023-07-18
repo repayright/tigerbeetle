@@ -498,17 +498,16 @@ pub fn GrooveType(
             grid: *Grid,
             options: Options,
         ) !Groove {
-            assert(options.cache_entries_max > 0);
             var objects_cache = try allocator.create(ObjectsCache);
             errdefer allocator.destroy(objects_cache);
 
-            objects_cache.* = try ObjectsCache.init(
-                allocator,
-                options.cache_entries_max,
+            objects_cache.* = try ObjectsCache.init(allocator, .{
+                .cache_value_count_max = options.cache_entries_max,
 
                 // TODO: Sizing here
-                options.prefetch_entries_max * 2,
-            );
+                .map_value_count_max = options.prefetch_entries_max * 2,
+                .name = @typeName(Object),
+            });
             errdefer objects_cache.deinit(allocator);
 
             // Intialize the object LSM tree.
