@@ -586,15 +586,18 @@ pub fn StateMachineType(
 
         fn prefetch_create_transfers_callback_accounts_mutable(completion: *AccountsMutableGroove.PrefetchContext) void {
             const self = PrefetchContext.parent(completion);
-            self.prefetch_finish();
+
+            self.forest.grooves.posted.prefetch(
+                prefetch_create_transfers_callback_posted,
+                &self.prefetch_context.posted,
+            );
         }
 
-        // TODO: Pending groove unification
-        // fn prefetch_create_transfers_callback_posted(completion: *PostedGroove.PrefetchContext) void {
-        //     const self = PrefetchContext.parent(completion);
+        fn prefetch_create_transfers_callback_posted(completion: *PostedGroove.PrefetchContext) void {
+            const self = PrefetchContext.parent(completion);
 
-        //     self.prefetch_finish();
-        // }
+            self.prefetch_finish();
+        }
 
         fn prefetch_lookup_accounts(self: *StateMachine, ids: []const u128) void {
             // Function call overhead? Prefetch multiple in one go?
