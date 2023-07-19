@@ -638,7 +638,7 @@ pub fn GrooveType(
             // }
 
             groove.prefetch_snapshot = snapshot_target;
-            std.log.info("Prefetch setup called, count is {}", .{groove.prefetch_ids.count()});
+            std.log.info("Prefetch setup called, count is {} {s}", .{ groove.prefetch_ids.count(), @typeName(Object) });
             assert(groove.prefetch_ids.count() == 0);
         }
 
@@ -647,7 +647,7 @@ pub fn GrooveType(
         /// For example, if all unique operations require the same two dependencies.
         pub inline fn prefetch_enqueue(groove: *Groove, key: PrimaryKey) void {
             if (!groove.objects_cache.has(key)) {
-                std.log.info("prefetch_enqueue called, because not has", .{});
+                std.log.info("prefetch_enqueue called, because not has {s} {}", .{ @typeName(Object), key });
                 groove.prefetch_ids.putAssumeCapacity(key, {});
             }
         }
@@ -685,6 +685,7 @@ pub fn GrooveType(
 
             fn start_workers(context: *PrefetchContext) void {
                 assert(context.workers_busy == 0);
+                std.log.info("prefetch workers start: {s}", .{@typeName(Object)});
 
                 // Track an extra "worker" that will finish after the loop.
                 //
@@ -705,13 +706,14 @@ pub fn GrooveType(
             }
 
             fn worker_finished(context: *PrefetchContext) void {
+                std.log.info("prefetch worker finished: {s}", .{@typeName(Object)});
                 context.workers_busy -= 1;
                 if (context.workers_busy == 0) context.finish();
             }
 
             fn finish(context: *PrefetchContext) void {
                 assert(context.workers_busy == 0);
-                std.log.info("prefetch worker finish", .{});
+                std.log.info("prefetch worker finish: {s}", .{@typeName(Object)});
 
                 assert(context.id_iterator.next() == null);
                 context.groove.prefetch_ids.clearRetainingCapacity();

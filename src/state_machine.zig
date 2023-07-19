@@ -340,9 +340,6 @@ pub fn StateMachineType(
         open_callback: ?fn (*StateMachine) void = null,
         compact_callback: ?fn (*StateMachine) void = null,
         checkpoint_callback: ?fn (*StateMachine) void = null,
-        hack_time1: u64 = 0,
-        hack_time2: u64 = 0,
-        hack_time3: u64 = 0,
 
         tracer_slot: ?tracer.SpanStart = null,
 
@@ -668,18 +665,12 @@ pub fn StateMachineType(
                 @src(),
             );
 
-            self.hack_time1 = 0;
-            self.hack_time2 = 0;
-            self.hack_time3 = 0;
             const result = switch (operation) {
                 .create_accounts => self.execute(.create_accounts, timestamp, input, output),
                 .create_transfers => self.execute(.create_transfers, timestamp, input, output),
                 .lookup_accounts => self.execute_lookup_accounts(input, output),
                 .lookup_transfers => self.execute_lookup_transfers(input, output),
             };
-            // std.log.info("Took {}ms to run groove ops 1", .{self.hack_time1 / 1000 / 1000});
-            // std.log.info("Took {}ms to run groove ops 2", .{self.hack_time2 / 1000 / 1000});
-            // std.log.info("Took {}ms to run groove ops 3", .{self.hack_time3 / 1000 / 1000});
 
             tracer.end(
                 &self.tracer_slot,
@@ -1028,11 +1019,7 @@ pub fn StateMachineType(
             var t2 = t.*;
             t2.amount = amount;
 
-            var timer = std.time.Timer.start() catch unreachable;
-            timer.reset();
-
             self.forest.grooves.transfers.insert(&t2);
-            self.hack_time1 += timer.read();
 
             var dr_mut_new = dr_mut.*;
             var cr_mut_new = cr_mut.*;
@@ -1043,13 +1030,8 @@ pub fn StateMachineType(
                 dr_mut_new.debits_posted += amount;
                 cr_mut_new.credits_posted += amount;
             }
-            timer.reset();
             self.forest.grooves.accounts_mutable.upsert(&dr_mut_new);
-            self.hack_time2 += timer.read();
-            timer.reset();
             self.forest.grooves.accounts_mutable.upsert(&cr_mut_new);
-            self.hack_time3 += timer.read();
-            // std.log.info("Took {}us to do groove ops.", .{time_groove_ops / 1000});
 
             self.commit_timestamp = t.timestamp;
             return .ok;
