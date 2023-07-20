@@ -20,9 +20,42 @@ func uint128(value string) tb_types.Uint128 {
 
 // Since we only require Go 1.17 we can't do this as a generic function
 // even though that would be fine. So do the dynamic approach for now.
-func assert(a, b interface{}, field string) {
-	if !reflect.DeepEqual(a, b) {
-		log.Fatalf("Expected %s to be [%+v (%T)], got: [%+v (%T)]", field, b, b, a, a)
+func assert(expected, got interface{}, field string) {
+	if !reflect.DeepEqual(expected, got) {
+		log.Fatalf("Expected %s to be [%+v (%T)], got: [%+v (%T)]", field, expected, expected, got, got)
+	}
+}
+
+func assertAccountBalances(client tb.Client, accounts []tb_types.Account, debugMsg string) {
+	ids := []tb_types.Uint128{}
+	for _, account := range accounts {
+		ids = append(ids, account.ID)
+	}
+	found, err := client.LookupAccounts(ids)
+	if err != nil {
+		log.Fatalf("Could not fetch accounts: %s", err)
+	}
+	assert(len(accounts), len(found), "accounts")
+
+	for _, account_found := range found {
+		requested := false
+		for _, account := range accounts {
+			if account.ID == account_found.ID {
+				requested = true
+				assert(account.DebitsPosted, account_found.DebitsPosted,
+					fmt.Sprintf("account %s debits, %s", account.ID, debugMsg))
+				assert(account.CreditsPosted, account_found.CreditsPosted,
+					fmt.Sprintf("account %s credits, %s", account.ID, debugMsg))
+				assert(account.DebitsPending, account_found.DebitsPending,
+					fmt.Sprintf("account %s debits pending, %s", account.ID, debugMsg))
+				assert(account.CreditsPending, account_found.CreditsPending,
+					fmt.Sprintf("account %s credits pending, %s", account.ID, debugMsg))
+			}
+		}
+
+		if !requested {
+			log.Fatalf("Unexpected account: %s", account_found.ID)
+		}
 	}
 }
 
@@ -80,27 +113,22 @@ func main() {
 	}
 
 	// Validate accounts pending and posted debits/credits before finishing the two-phase transfer
-	accounts, err := client.LookupAccounts([]tb_types.Uint128{uint128("1"), uint128("2")})
-	if err != nil {
-		log.Fatalf("Could not fetch accounts: %s", err)
-	}
-	assert(len(accounts), 2, "accounts")
-
-	for _, account := range accounts {
-		if account.ID == uint128("1") {
-			assert(account.DebitsPosted, uint64(0), "account 1 debits, before posted")
-			assert(account.CreditsPosted, uint64(0), "account 1 credits, before posted")
-			assert(account.DebitsPending, uint64(500), "account 1 debits pending, before posted")
-			assert(account.CreditsPending, uint64(0), "account 1 credits pending, before posted")
-		} else if account.ID == uint128("2") {
-			assert(account.DebitsPosted, uint64(0), "account 2 debits, before posted")
-			assert(account.CreditsPosted, uint64(0), "account 2 credits, before posted")
-			assert(account.DebitsPending, uint64(0), "account 2 debits pending, before posted")
-			assert(account.CreditsPending, uint64(500), "account 2 credits pending, before posted")
-		} else {
-			log.Fatalf("Unexpected account: %s", account.ID)
-		}
-	}
+	assertAccountBalances(client, []tb_types.Account{
+		{
+			ID:             uint128("1"),
+			DebitsPosted:   uint64(0),
+			CreditsPosted:  uint64(0),
+			DebitsPending:  uint64(500),
+			CreditsPending: uint64(0),
+		},
+		{
+			ID:             uint128("2"),
+			DebitsPosted:   uint64(0),
+			CreditsPosted:  uint64(0),
+			DebitsPending:  uint64(0),
+			CreditsPending: uint64(500),
+		},
+	}, "before posted")
 
 	// Create a second transfer simply posting the first transfer
 	transferRes, err = client.CreateTransfers([]tb_types.Transfer{
@@ -128,42 +156,37 @@ func main() {
 	if err != nil {
 		log.Fatalf("Error looking up transfers: %s", err)
 	}
-	assert(len(transfers), 2, "transfers")
+	assert(2, len(transfers), "transfers")
 
 	for _, transfer := range transfers {
 		if transfer.ID == uint128("1") {
-			assert(transfer.TransferFlags().Pending, true, "transfer 1 pending")
-			assert(transfer.TransferFlags().PostPendingTransfer, false, "transfer 1 post_pending_transfer")
+			assert(true, transfer.TransferFlags().Pending, "transfer 1 pending")
+			assert(false, transfer.TransferFlags().PostPendingTransfer, "transfer 1 post_pending_transfer")
 		} else if transfer.ID == uint128("2") {
-			assert(transfer.TransferFlags().Pending, false, "transfer 2 pending")
-			assert(transfer.TransferFlags().PostPendingTransfer, true, "transfer 2 post_pending_transfer")
+			assert(false, transfer.TransferFlags().Pending, "transfer 2 pending")
+			assert(true, transfer.TransferFlags().PostPendingTransfer, "transfer 2 post_pending_transfer")
 		} else {
 			log.Fatalf("Unknown transfer: %s", transfer.ID)
 		}
 	}
 
 	// Validate accounts pending and posted debits/credits after finishing the two-phase transfer
-	accounts, err = client.LookupAccounts([]tb_types.Uint128{uint128("1"), uint128("2")})
-	if err != nil {
-		log.Fatalf("Could not fetch accounts: %s", err)
-	}
-	assert(len(accounts), 2, "accounts")
-
-	for _, account := range accounts {
-		if account.ID == uint128("1") {
-			assert(account.DebitsPosted, uint64(500), "account 1 debits")
-			assert(account.CreditsPosted, uint64(0), "account 1 credits")
-			assert(account.DebitsPending, uint64(0), "account 1 debits pending")
-			assert(account.CreditsPending, uint64(0), "account 1 credits pending")
-		} else if account.ID == uint128("2") {
-			assert(account.DebitsPosted, uint64(0), "account 2 debits")
-			assert(account.CreditsPosted, uint64(500), "account 2 credits")
-			assert(account.DebitsPending, uint64(0), "account 2 debits pending")
-			assert(account.CreditsPending, uint64(0), "account 2 credits pending")
-		} else {
-			log.Fatalf("Unexpected account: %s", account.ID)
-		}
-	}
+	assertAccountBalances(client, []tb_types.Account{
+		{
+			ID:             uint128("1"),
+			DebitsPosted:   uint64(500),
+			CreditsPosted:  uint64(0),
+			DebitsPending:  uint64(0),
+			CreditsPending: uint64(0),
+		},
+		{
+			ID:             uint128("2"),
+			DebitsPosted:   uint64(0),
+			CreditsPosted:  uint64(500),
+			DebitsPending:  uint64(0),
+			CreditsPending: uint64(0),
+		},
+	}, "after posted")
 
 	fmt.Println("ok")
 }
