@@ -56,7 +56,12 @@ pub fn TableMemoryType(comptime Table: type) type {
         fn stream_precedence(context: *const TableMemory, a: u32, b: u32) bool {
             _ = context;
 
-            // Higher streams have higher precedence
+            // Higher streams have higher precedence. This is critical for correct
+            // behavior since we're just an array and not a Map anymore. Each stream
+            // represents a batch, and we need to ensure the last value is used (
+            // which is taken care of by fill_immutable_values() in compaction.zig).
+            // However, the TigerBeetle state machine currently doesn't rely on or
+            // need this.
             return a > b;
         }
 
@@ -108,7 +113,7 @@ pub fn TableMemoryType(comptime Table: type) type {
             }
         }
 
-        /// Synchronous compact hook. Used to sort up to k_sort_interval values each compaction beat.
+        /// Synchronous compact hook. Sorts the previous beat's worth of values.
         pub fn compact(table: *TableMemory) void {
             assert(table.mutability == .mutable);
 
@@ -124,7 +129,7 @@ pub fn TableMemoryType(comptime Table: type) type {
         pub fn put(table: *TableMemory, value: *const Value) void {
             assert(table.mutability == .mutable);
             assert(table.values.len == value_count_max); // Sanity check
-            // std.log.info("{*}: Putting {} at index {}", .{ table, value, table.value_context.count });
+            std.log.info("HACKME: Putting {} at index {}", .{ value, table.value_context.count });
 
             table.values[table.value_context.count] = value.*;
             table.value_context.count += 1;

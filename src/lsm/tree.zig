@@ -169,7 +169,7 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type) type {
         };
 
         /// (Constructed by the StateMachine.)
-       pub const Options = struct {
+        pub const Options = struct {
             object_tree: bool = false,
             // TODO: Do we get rid of this and everywher up the tree?
         };
@@ -257,7 +257,7 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type) type {
         pub fn reset(tree: *Tree) void {
             // TODO
             // tree.table_mutable.reset();
-            // tree.table_immutable.clear();
+            // tree.table_immutable.reset();
             tree.manifest.reset();
 
             tree.compaction_table_immutable.reset();
@@ -559,11 +559,7 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type) type {
                 // We skip the main compaction code path first compaction bar entirely because it
                 // is a special case — its first beat is 1, not 0.
                 tree.compaction_phase = .skipped;
-
                 tree.lookup_snapshot_max = op + 1;
-                if (op + 1 == constants.lsm_batch_multiple) {
-                    // tree.swap_mutable_and_immutable();
-                }
 
                 tree.compaction_callback = .{ .next_tick = callback };
                 tree.grid.on_next_tick(compact_finish_next_tick, &tree.compaction_next_tick);
@@ -571,19 +567,13 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type) type {
             }
 
             if (tree.grid.superblock.working.vsr_state.op_compacted(op)) {
+                std.log.info("XXXXXXXXXXXXXXXXX HERE", .{});
                 // We recovered from a checkpoint, and must avoid replaying one bar of
                 // compactions that were applied before the checkpoint. Repeating these ops'
                 // compactions would actually perform different compactions than before,
                 // causing the storage state of the replica to diverge from the cluster.
                 // See also: lookup_snapshot_max_for_checkpoint().
                 tree.compaction_phase = .skipped;
-
-                if (op + 1 == tree.lookup_snapshot_max.?) {
-                    // This is the last op of the skipped compaction bar.
-                    // Prepare the immutable table for the next bar — since this state is
-                    // in-memory, it cannot be skipped.
-                    // tree.compact_mutable_table_into_immutable();
-                }
 
                 tree.compaction_callback = .{ .next_tick = callback };
                 tree.grid.on_next_tick(compact_finish_next_tick, &tree.compaction_next_tick);
@@ -944,9 +934,6 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type) type {
 
             tree.table_immutable = current_table_mutable;
             tree.table_mutable = current_table_immutable;
-
-            // TODO?
-            // if (tree.table_mutable.count() == 0) return;
 
             assert(tree.table_mutable.count() == 0);
         }

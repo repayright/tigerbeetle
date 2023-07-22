@@ -37,7 +37,6 @@ pub fn CacheMap(
     );
 
     const load_factor = 50;
-    // TODO: Should be stdx when merged
     const Map = stdx.HashMapUnmanaged(
         Value,
         void,
@@ -202,8 +201,8 @@ pub fn CacheMap(
             }
         }
 
-        /// Start a new scope. Within a scope, changes can be commited
-        /// or rolled back. Only one scope can be active at a time.
+        /// Start a new scope. Within a scope, changes can be persisted
+        /// or discarded. Only one scope can be active at a time.
         pub fn scope_open(self: *Self) void {
             assert(!self.scope_is_active);
             self.scope_is_active = true;
@@ -213,7 +212,7 @@ pub fn CacheMap(
             assert(self.scope_is_active);
 
             // We don't need to do anything to persist a scope; we can just drop it
-            // and clear the underlying scope map
+            // and clear the underlying scope map.
             if (data == .persist) {
                 self.scope_is_active = false;
                 self.scope_map.clearRetainingCapacity();
@@ -232,7 +231,7 @@ pub fn CacheMap(
                     // the original value didn't exist.
                     self.remove(key_from_value(value));
                 } else {
-                    // Reverting an update or delete consist of an insert to the original value
+                    // Reverting an update or delete consist of an insert to the original value.
                     self.upsert(value);
                 }
             }
@@ -240,7 +239,7 @@ pub fn CacheMap(
             self.scope_map.clearRetainingCapacity();
         }
 
-        /// Remove any entries in our map that are older than `op`
+        /// Remove any entries in our map that are older than `op`.
         pub fn compact(self: *Self, op: u64) void {
             assert(!self.scope_is_active);
 
@@ -334,7 +333,6 @@ test "cache_map: unit" {
         }.equal,
         TestTable.HashMapContextValue,
         struct {
-            // NEed to make this more efficient!
             inline fn tombstone_from_key(a: PrimaryKey) Object {
                 var obj: Object = undefined;
                 obj.key = a;
@@ -344,7 +342,6 @@ test "cache_map: unit" {
             }
         }.tombstone_from_key,
         struct {
-            // NEed to make this more efficient!
             inline fn tombstone(a: *const Object) bool {
                 return a.tombstone;
             }
@@ -392,4 +389,6 @@ test "cache_map: unit" {
     assert(cache_map.get(2) == null);
     cache_map.scope_close(.discard);
     assert(std.meta.eql(cache_map.get(2).?.*, .{ .key = 2, .value = 2, .tombstone = false }));
+
+    // TODO: Test cache overflow behavior, with above
 }

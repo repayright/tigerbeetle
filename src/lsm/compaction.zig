@@ -295,7 +295,13 @@ pub fn CompactionType(
             var immutable_values_in = compaction.immutable_values_in;
             var iterator = &compaction.context.table_info_a.immutable;
             while (iterator.pop() catch null) |value| : (i += 1) {
+                std.log.info("Filling: {}", .{value});
+                if (i > 0 and compare_keys(key_from_value(&immutable_values_in[i - 1]), key_from_value(&value)) == .eq) {
+                    std.log.info("HACKAA: Decrementing i...", .{});
+                    i -= 1;
+                }
                 immutable_values_in[i] = value;
+
                 if (i == compaction.immutable_values_in.len - 1) {
                     break;
                 }

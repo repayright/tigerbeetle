@@ -280,6 +280,7 @@ const Environment = struct {
     }
 
     fn put_account(env: *Environment, a: *const Account) void {
+        std.log.info("HACKME inside put_account: {}", .{a});
         env.forest.grooves.accounts_immutable.upsert(&StateMachine.AccountImmutable.from_account(a));
         env.forest.grooves.accounts_mutable.upsert(&StateMachine.AccountMutable.from_account(a));
     }
@@ -462,6 +463,8 @@ const Environment = struct {
                 if (model_account == null) {
                     assert(lsm_account == null);
                 } else {
+                    std.log.info("Model: {}", .{model_account});
+                    std.log.info("LSM: {}", .{lsm_account});
                     assert(std.mem.eql(
                         u8,
                         std.mem.asBytes(&model_account.?),

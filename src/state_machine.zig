@@ -1029,6 +1029,7 @@ pub fn StateMachineType(
             if (t.flags.pending) {
                 dr_mut_new.debits_pending += amount;
                 cr_mut_new.credits_pending += amount;
+                std.log.info("updating account mutable for pending: {}", .{dr_mut_new});
             } else {
                 dr_mut_new.debits_posted += amount;
                 cr_mut_new.credits_posted += amount;
@@ -1061,6 +1062,7 @@ pub fn StateMachineType(
         }
 
         fn post_or_void_pending_transfer(self: *StateMachine, t: *const Transfer) CreateTransferResult {
+            std.log.info("Doing: {}", .{t});
             assert(t.id != 0);
             assert(t.flags.padding == 0);
             assert(t.reserved == 0);
@@ -1151,7 +1153,6 @@ pub fn StateMachineType(
             var cr_mut_new = self.forest.grooves.accounts_mutable.get(cr_immut.timestamp).?.*;
             assert(dr_mut_new.timestamp == dr_immut.timestamp);
             assert(cr_mut_new.timestamp == cr_immut.timestamp);
-
             dr_mut_new.debits_pending -= p.amount;
             cr_mut_new.credits_pending -= p.amount;
 
@@ -1162,6 +1163,8 @@ pub fn StateMachineType(
                 cr_mut_new.credits_posted += amount;
             }
 
+            std.log.info("dr_mut_new: {}", .{dr_mut_new});
+            std.log.info("cr_mut_new: {}", .{cr_mut_new});
             self.forest.grooves.accounts_mutable.upsert(&dr_mut_new);
             self.forest.grooves.accounts_mutable.upsert(&cr_mut_new);
 

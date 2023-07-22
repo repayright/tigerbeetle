@@ -638,7 +638,6 @@ pub fn GrooveType(
             // }
 
             groove.prefetch_snapshot = snapshot_target;
-            std.log.info("Prefetch setup called, count is {} {s}", .{ groove.prefetch_ids.count(), @typeName(Object) });
             assert(groove.prefetch_ids.count() == 0);
         }
 
@@ -647,7 +646,6 @@ pub fn GrooveType(
         /// For example, if all unique operations require the same two dependencies.
         pub inline fn prefetch_enqueue(groove: *Groove, key: PrimaryKey) void {
             if (!groove.objects_cache.has(key)) {
-                std.log.info("prefetch_enqueue called, because not has {s} {}", .{ @typeName(Object), key });
                 groove.prefetch_ids.putAssumeCapacity(key, {});
             }
         }
@@ -685,7 +683,6 @@ pub fn GrooveType(
 
             fn start_workers(context: *PrefetchContext) void {
                 assert(context.workers_busy == 0);
-                std.log.info("prefetch workers start: {s}", .{@typeName(Object)});
 
                 // Track an extra "worker" that will finish after the loop.
                 //
@@ -706,14 +703,12 @@ pub fn GrooveType(
             }
 
             fn worker_finished(context: *PrefetchContext) void {
-                std.log.info("prefetch worker finished: {s}", .{@typeName(Object)});
                 context.workers_busy -= 1;
                 if (context.workers_busy == 0) context.finish();
             }
 
             fn finish(context: *PrefetchContext) void {
                 assert(context.workers_busy == 0);
-                std.log.info("prefetch worker finish: {s}", .{@typeName(Object)});
 
                 assert(context.id_iterator.next() == null);
                 context.groove.prefetch_ids.clearRetainingCapacity();
@@ -845,17 +840,23 @@ pub fn GrooveType(
                 return groove.insert(new);
             }
 
-            const old = maybe_old.?;
+            // Explict stack copy needed
+            // TODO: Triple check the below. Something is funky here, before we were bugging out
+            // because we weren't copying this and taking it by ptr instead.
+            const old = maybe_old.?.*;
 
             assert(@field(old, primary_field) == @field(new, primary_field));
             assert(old.timestamp == new.timestamp);
+
+            // Sanity check to ensure we're not just aliasing the same memory.
+            assert(&old != new);
 
             groove.objects_cache.upsert(new);
 
             // The ID can't change, so no need to update the ID tree.
 
             // Update the object tree entry if any of the fields (even ignored) are different.
-            if (!std.mem.eql(u8, std.mem.asBytes(old), std.mem.asBytes(new))) {
+            if (!std.mem.eql(u8, std.mem.asBytes(&old), std.mem.asBytes(new))) {
                 // Unlike the index trees, the new and old values in the object tree share the
                 // same key. Therefore put() is sufficient to overwrite the old value.
                 groove.objects.put(new);
@@ -863,7 +864,7 @@ pub fn GrooveType(
 
             inline for (std.meta.fields(IndexTrees)) |field| {
                 const Helper = IndexTreeFieldHelperType(field.name);
-                const old_index = Helper.derive_index(old);
+                const old_index = Helper.derive_index(&old);
                 const new_index = Helper.derive_index(new);
 
                 // Only update the indexes that change.
