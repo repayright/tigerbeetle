@@ -224,6 +224,17 @@ pub fn TableMemoryType(comptime Table: type) type {
             table.values = table.values.ptr[0..value_count_max];
             allocator.free(table.values);
         }
+
+        pub fn reset(table: *TableMemory) void {
+            var values_max = table.values.ptr[0..value_count_max];
+            var mutability: Mutability = if (table.mutability == .immutable) .{ .immutable = .{ .flushed = true, .snapshot_min = undefined } } else .mutable;
+
+            table.* = .{
+                .values = values_max,
+                .value_context = .{},
+                .mutability = mutability,
+            };
+        }
     };
 }
 

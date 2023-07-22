@@ -716,6 +716,7 @@ pub fn CompactionType(
                         values_in_b_index += 1;
                         if (Table.usage == .secondary_index) {
                             if (tombstone(value_a)) {
+                                std.log.info("Comparing {} to {}", .{value_a, value_b});
                                 assert(!tombstone(value_b));
                                 continue;
                             }

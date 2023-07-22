@@ -255,9 +255,8 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type) type {
         }
 
         pub fn reset(tree: *Tree) void {
-            // TODO
-            // tree.table_mutable.reset();
-            // tree.table_immutable.reset();
+            tree.table_mutable.reset();
+            tree.table_immutable.reset();
             tree.manifest.reset();
 
             tree.compaction_table_immutable.reset();
@@ -280,10 +279,7 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type) type {
         }
 
         pub fn remove(tree: *Tree, value: *const Value) void {
-            assert(false);
-            _ = tree;
-            _ = value;
-            // tree.table_mutable.put(Table.tombstone_from_key(Table.key_from_value(value.*)));
+            tree.table_mutable.put(&Table.tombstone_from_key(Table.key_from_value(value)));
         }
 
         pub fn lookup_from_levels(
