@@ -294,12 +294,27 @@ pub fn CompactionType(
             var i: u32 = 0;
             var immutable_values_in = compaction.immutable_values_in;
             var iterator = &compaction.context.table_info_a.immutable;
-            while (iterator.pop() catch null) |value| : (i += 1) {
-                std.log.info("Filling: {}", .{value});
-                if (i > 0 and compare_keys(key_from_value(&immutable_values_in[i - 1]), key_from_value(&value)) == .eq) {
-                    std.log.info("HACKAA: Decrementing i...", .{});
-                    i -= 1;
-                }
+            while (iterator.pop_latest() catch null) |value| : (i += 1) {
+                std.log.info("Filling: {} - kfv: {}", .{value, key_from_value(&value)});
+                // if (i > 0 and compare_keys(key_from_value(&immutable_values_in[i - 1]), key_from_value(&value)) == .eq) {
+                //     std.log.info("HACKAA: Decrementing i...", .{});
+                //     i -= 1;
+                // }
+
+                // // Implements the secondary index optimization that was in tree.zig -> remove()
+                // // previously.
+                // // TODO: Clean this up
+                // if (Table.usage == .secondary_index) {
+                //     if (i > 0) {
+                //         const previous_field = key_from_value(&immutable_values_in[i - 1]).field;
+                //         const current_field = key_from_value(&value).field;
+                //         const current_is_tombstone = tombstone(&value);
+
+                //         if (previous_field == current_field and current_is_tombstone) {
+                //             std.log.info("HACKAAZ: What to do...", .{});
+                //         }
+                //     }
+                // }
                 immutable_values_in[i] = value;
 
                 if (i == compaction.immutable_values_in.len - 1) {

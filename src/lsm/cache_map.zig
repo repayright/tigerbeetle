@@ -117,6 +117,7 @@ pub fn CacheMap(
 
         pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
             self.map.deinit(allocator);
+            self.swap_map.deinit(allocator);
             self.scope_map.deinit(allocator);
             self.cache.deinit(allocator);
 
@@ -126,7 +127,7 @@ pub fn CacheMap(
         }
 
         // TODO: Profile me
-        pub fn has(self: *Self, key: Key) bool {
+        pub inline fn has(self: *Self, key: Key) bool {
             return self.cache.get_index(key) != null or self.map.getKeyPtr(tombstone_from_key(key)) != null;
         }
 
@@ -350,7 +351,11 @@ test "cache_map: unit" {
 
     const allocator = testing.allocator;
 
-    var cache_map = try TestCacheMap.init(allocator, 2048, 32);
+    var cache_map = try TestCacheMap.init(allocator, .{
+        .cache_value_count_max = 2048,
+        .map_value_count_max = 32,
+        .name = "test map",
+    });
     defer cache_map.deinit(allocator);
 
     cache_map.upsert(&.{ .key = 1, .value = 1, .tombstone = false });

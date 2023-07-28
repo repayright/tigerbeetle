@@ -279,6 +279,32 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type) type {
         }
 
         pub fn remove(tree: *Tree, value: *const Value) void {
+            // In compaction.zig -> merge() we ensure that if two values are equal
+            // they aren't both tombstones. Previously, this logic used to be implemented
+            // here. Now, its moved to fill_immutable_values whereby if we're dealing
+            // with a secondary index, and we have a put and a tombstone, they cancel out.
+            // switch (usage) {
+            //     .secondary_index => {
+            //         const existing = table.values.fetchRemove(value.*);
+            //         if (existing) |kv| {
+            //             // The previous operation on this key then it must have been a put.
+            //             // The put and remove cancel out.
+            //             assert(!tombstone(&kv.key));
+            //         } else {
+            //             // If the put is already on-disk, then we need to follow it with a tombstone.
+            //             // The put and the tombstone may cancel each other out later during compaction.
+            //             table.values.putAssumeCapacityNoClobber(tombstone_from_key(key_from_value(value)), {});
+            //         }
+            //     },
+            //     .general => {
+            //         // If the key is already present in the hash map, the old key will not be overwritten
+            //         // by the new one if using e.g. putAssumeCapacity(). Instead we must use the lower
+            //         // level getOrPut() API and manually overwrite the old key.
+            //         const upsert = table.values.getOrPutAssumeCapacity(value.*);
+            //         upsert.key_ptr.* = tombstone_from_key(key_from_value(value));
+            //     },
+            // }
+
             tree.table_mutable.put(&Table.tombstone_from_key(Table.key_from_value(value)));
         }
 

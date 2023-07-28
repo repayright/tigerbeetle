@@ -119,7 +119,7 @@ pub fn TableMemoryType(comptime Table: type) type {
 
             table.value_context.buffers[table.value_context.buffers_count] = table.values[table.value_context.count_last..table.value_context.count];
             std.sort.sort(Value, table.value_context.buffers[table.value_context.buffers_count], {}, sort_values_by_key_in_ascending_order);
-
+            std.log.warn("Values after sort: {any}", .{table.value_context.buffers[table.value_context.buffers_count]});
             table.value_context.buffers_count += 1;
 
             // TODO: Get rid of count_last
@@ -290,10 +290,18 @@ test "table_memory: unit" {
     table_memory.make_immutable(0);
     var iterator = table_memory.iterator();
 
-    assert(std.meta.eql(iterator.pop(), .{ .key = 0, .value = 0, .tombstone = false }));
-    assert(std.meta.eql(iterator.pop(), .{ .key = 1, .value = 11, .tombstone = false }));
-    assert(std.meta.eql(iterator.pop(), .{ .key = 3, .value = 3333, .tombstone = false }));
-    assert(std.meta.eql(iterator.pop(), .{ .key = 5, .value = 5, .tombstone = false }));
+    const a1 = iterator.pop_latest();
+    const a2 = iterator.pop_latest();
+    const a3 = iterator.pop_latest();
+    const a4 = iterator.pop_latest();
+    std.log.warn("Got: {}", .{a1});
+    std.log.warn("Got: {}", .{a2});
+    std.log.warn("Got: {}", .{a3});
+    std.log.warn("Got: {}", .{a4});
+    assert(std.meta.eql(a1, .{ .key = 0, .value = 0, .tombstone = false }));
+    assert(std.meta.eql(a2, .{ .key = 1, .value = 11, .tombstone = false }));
+    assert(std.meta.eql(a3, .{ .key = 3, .value = 3333, .tombstone = false }));
+    assert(std.meta.eql(a4, .{ .key = 5, .value = 5, .tombstone = false }));
 
     // "Flush" and make mutable again
     table_memory.mutability.immutable.flushed = true;
@@ -304,4 +312,6 @@ test "table_memory: unit" {
     assert(table_memory.value_context.key_max == null);
     // assert(table_memory.value_context.sorted);
     assert(table_memory.mutability == .mutable);
+
+    // TODO: Assert key_min / max tracking too.
 }

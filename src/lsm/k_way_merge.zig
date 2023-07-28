@@ -89,6 +89,9 @@ pub fn KWayMergeIteratorType(
             return it.k == 0;
         }
 
+        // TODO: This behaviour is confusing........
+        // It'll give the first matching key. It should either give the last matching
+        // equals key, OR not have any logic and return equal values in place (better)
         pub fn pop(it: *Self) error{Drained}!?Value {
             while (try it.pop_internal()) |value| {
                 const key = key_from_value(&value);
@@ -97,6 +100,32 @@ pub fn KWayMergeIteratorType(
                         .lt => assert(it.direction == .ascending),
                         // Discard this value and pop the next one.
                         .eq => continue,
+                        .gt => assert(it.direction == .descending),
+                    }
+                }
+                it.previous_key_popped = key;
+                return value;
+            }
+
+            return null;
+        }
+
+        // Address the above comment, by popping the latest value
+        pub fn pop_latest(it: *Self) error{Drained}!?Value {
+            while (try it.pop_internal()) |value| {
+                const key = key_from_value(&value);
+                const maybe_next_key = stream_peek(it.context, it.streams[0]) catch null;
+
+                if (maybe_next_key) |next_key| {
+                    if (compare_keys(key, next_key) == .eq) {
+                        continue;
+                    }
+                }
+
+                if (it.previous_key_popped) |previous| {
+                    switch (compare_keys(previous, key)) {
+                        .lt => assert(it.direction == .ascending),
+                        .eq => {},
                         .gt => assert(it.direction == .descending),
                     }
                 }
