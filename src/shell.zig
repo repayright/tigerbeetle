@@ -214,7 +214,7 @@ pub fn exec_stdout(shell: *Shell, comptime cmd: []const u8, cmd_args: anytype) !
     errdefer shell.arena.allocator().free(res.stdout);
 
     switch (res.term) {
-        .Exited => |code| if (code == 0) return error.NonZeroExitStatus,
+        .Exited => |code| if (code != 0) return error.NonZeroExitStatus,
         else => return error.CommandFailed,
     }
 
