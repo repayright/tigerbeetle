@@ -950,6 +950,7 @@ fn client_integration(
 ) void {
     const client_integration_build = b.step("client_integration", "Run sample integration tests for a client library");
     const binary = b.addExecutable("client_integration", "src/clients/integration.zig");
+    binary.setMainPkgPath("src");
     binary.setBuildMode(mode);
     binary.setTarget(target);
     client_integration_build.dependOn(&binary.step);
@@ -969,6 +970,7 @@ fn client_docs(
 ) void {
     const client_docs_build = b.step("client_docs", "Generate documentation for a client library");
     const binary = b.addExecutable("client_docs", "src/clients/docs_generate.zig");
+    binary.setMainPkgPath("src");
     binary.setBuildMode(mode);
     binary.setTarget(target);
     client_docs_build.dependOn(&binary.step);

@@ -3,6 +3,7 @@ test {
     _ = @import("copyhound.zig");
     _ = @import("ewah.zig");
     _ = @import("fifo.zig");
+    _ = @import("flags.zig");
     _ = @import("hash_map.zig");
     _ = @import("io.zig");
     _ = @import("ring_buffer.zig");
@@ -39,9 +40,6 @@ test {
     _ = @import("testing/id.zig");
     _ = @import("testing/storage.zig");
     _ = @import("testing/table.zig");
-
-    // This one is a bit sketchy: we rely on tests not actually using the `vsr` package.
-    _ = @import("tigerbeetle/cli.zig");
 
     _ = @import("vsr.zig");
     _ = @import("vsr/clock.zig");

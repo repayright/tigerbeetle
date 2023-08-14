@@ -35,7 +35,7 @@ pub fn StateMachineType(
 
     return struct {
         const StateMachine = @This();
-        const Grid = @import("lsm/grid.zig").GridType(Storage);
+        const Grid = @import("vsr/grid.zig").GridType(Storage);
         const GrooveType = @import("lsm/groove.zig").GrooveType;
         const ForestType = @import("lsm/forest.zig").ForestType;
 
@@ -265,7 +265,7 @@ pub fn StateMachineType(
             },
         );
 
-        const PostedGrooveValue = extern struct {
+        pub const PostedGrooveValue = extern struct {
             timestamp: u64,
             fulfillment: enum(u8) {
                 posted = 0,
@@ -1382,7 +1382,7 @@ const TestContext = struct {
     const Storage = @import("testing/storage.zig").Storage;
     const data_file_size_min = @import("vsr/superblock.zig").data_file_size_min;
     const SuperBlock = @import("vsr/superblock.zig").SuperBlockType(Storage);
-    const Grid = @import("lsm/grid.zig").GridType(Storage);
+    const Grid = @import("vsr/grid.zig").GridType(Storage);
     const StateMachine = StateMachineType(Storage, .{
         // Overestimate the batch size because the test never compacts.
         .message_body_size_max = TestContext.message_body_size_max,
@@ -1563,11 +1563,7 @@ const TestCreateTransfer = struct {
     }
 };
 
-fn check(comptime test_table: []const u8) !void {
-    // TODO(Zig): Disabled because of spurious failure (segfault) on MacOS at the
-    // `test_actions.constSlice()`. Most likely a comptime bug that will be resolved by 0.10.
-    if (@import("builtin").os.tag == .macos) return;
-
+fn check(test_table: []const u8) !void {
     const parse_table = @import("testing/table.zig").parse;
     const allocator = std.testing.allocator;
 
@@ -1698,13 +1694,16 @@ fn check(comptime test_table: []const u8) !void {
                     for (std.mem.bytesAsSlice(Transfer, reply_actual)) |*t| t.timestamp = 0;
                 }
 
-                // TODO(Zig): Use inline-switch to cast the replies to []Reply(operation), then
-                // change this to a simple "try".
-                testing.expectEqualSlices(u8, reply.items, reply_actual) catch |err| {
-                    print_results("expect", commit_operation, reply.items);
-                    print_results("actual", commit_operation, reply_actual);
-                    return err;
-                };
+                switch (commit_operation) {
+                    inline else => |commit_operation_comptime| {
+                        const Result = TestContext.StateMachine.Result(commit_operation_comptime);
+                        try testing.expectEqualSlices(
+                            Result,
+                            mem.bytesAsSlice(Result, reply.items),
+                            mem.bytesAsSlice(Result, reply_actual),
+                        );
+                    },
+                }
 
                 request.clearRetainingCapacity();
                 reply.clearRetainingCapacity();
@@ -1716,29 +1715,6 @@ fn check(comptime test_table: []const u8) !void {
     assert(operation == null);
     assert(request.items.len == 0);
     assert(reply.items.len == 0);
-}
-
-fn print_results(
-    label: []const u8,
-    operation: TestContext.StateMachine.Operation,
-    reply: []const u8,
-) void {
-    inline for (.{
-        .create_accounts,
-        .create_transfers,
-        .lookup_accounts,
-        .lookup_transfers,
-    }) |o| {
-        if (o == operation) {
-            const Result = TestContext.StateMachine.Result(o);
-            const results = std.mem.bytesAsSlice(Result, reply);
-            for (results) |result, i| {
-                std.debug.print("{s}[{}]={}\n", .{ label, i, result });
-            }
-            return;
-        }
-    }
-    unreachable;
 }
 
 test "create_accounts" {

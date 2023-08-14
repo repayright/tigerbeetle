@@ -7,8 +7,8 @@ const constants = @import("../constants.zig");
 const stdx = @import("../stdx.zig");
 
 const StaticAllocator = @import("../static_allocator.zig");
-const allocate_block = @import("../lsm/grid.zig").allocate_block;
-const GridType = @import("../lsm/grid.zig").GridType;
+const allocate_block = @import("grid.zig").allocate_block;
+const GridType = @import("grid.zig").GridType;
 const IOPS = @import("../iops.zig").IOPS;
 const MessagePool = @import("../message_pool.zig").MessagePool;
 const Message = @import("../message_pool.zig").MessagePool.Message;
@@ -7669,18 +7669,17 @@ pub fn ReplicaType(
             const stage: *const SyncStage.RequestingTrailers = &self.syncing.requesting_trailers;
             assert(stage.done());
 
-            // TODO(Zig) Use named format specifiers to avoid mixups.
-            log.debug("{}: sync_requesting_trailers_callback: " ++
-                "checkpoint_op={} checkpoint_id={x:0>32} " ++
-                "manifest_checksum={x:0>32} " ++
-                "free_set_checksum={x:0>32} " ++
-                "client_sessions_checksum={x:0>32}", .{
-                self.replica,
-                stage.target.checkpoint_op,
-                stage.target.checkpoint_id,
-                stage.trailers.get(.manifest).final.?.checksum,
-                stage.trailers.get(.free_set).final.?.checksum,
-                stage.trailers.get(.client_sessions).final.?.checksum,
+            log.debug("{[replica]}: sync_requesting_trailers_callback: " ++
+                "checkpoint_op={[checkpoint_op]} checkpoint_id={[checkpoint_id]x:0>32} " ++
+                "manifest_checksum={[manifest_checksum]x:0>32} " ++
+                "free_set_checksum={[free_set_checksum]x:0>32} " ++
+                "client_sessions_checksum={[client_sessions_checksum]x:0>32}", .{
+                .replica = self.replica,
+                .checkpoint_op = stage.target.checkpoint_op,
+                .checkpoint_id = stage.target.checkpoint_id,
+                .manifest_checksum = stage.trailers.get(.manifest).final.?.checksum,
+                .free_set_checksum = stage.trailers.get(.free_set).final.?.checksum,
+                .client_sessions_checksum = stage.trailers.get(.client_sessions).final.?.checksum,
             });
 
             self.sync_dispatch(.{ .updating_superblock = .{

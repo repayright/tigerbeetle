@@ -14,7 +14,7 @@ const config = constants.config;
 const tracer = vsr.tracer;
 
 const cli = @import("cli.zig");
-const fatal = cli.fatal;
+const fatal = vsr.flags.fatal;
 
 const IO = vsr.io.IO;
 const Time = vsr.time.Time;
@@ -207,7 +207,7 @@ const Command = struct {
         log_main.info("{}: cluster={}: listening on {}", .{
             replica.replica,
             replica.cluster,
-            args.addresses[replica.replica],
+            replica.message_bus.process.accept_address,
         });
 
         if (constants.aof_recovery) {
