@@ -3,7 +3,7 @@
 //!
 //! Fault Injection
 //!
-//! Storage injects faults that the cluster can (i.e. should be able to) recover from.
+//! Storage injects faults that a fully-connected cluster can (i.e. should be able to) recover from.
 //! Each zone can tolerate a different pattern of faults.
 //!
 //! - superblock:
@@ -18,7 +18,10 @@
 //!   - When replica_count=1, its WAL can only be corrupted by a crash, never a read/write.
 //!     (When replica_count=1, there are no other replicas to assist with repair).
 //!
-//! - grid: (TODO: Enable grid faults when grid repair is implemented).
+//! - grid:
+//!   - Similarly to prepares and headers, ClusterFaultAtlas ensures that at least one replica will
+//!     have a block.
+//!   - When replica_count≤2, grid faults are disabled.
 //!
 const std = @import("std");
 const assert = std.debug.assert;
@@ -32,7 +35,7 @@ const vsr = @import("../vsr.zig");
 const superblock = @import("../vsr/superblock.zig");
 const BlockType = @import("../lsm/grid.zig").BlockType;
 const stdx = @import("../stdx.zig");
-const PriorityQueue = @import("./priority_queue.zig").PriorityQueue;
+const PriorityQueue = std.PriorityQueue;
 const fuzz = @import("./fuzz.zig");
 const hash_log = @import("./hash_log.zig");
 
@@ -89,7 +92,7 @@ pub const Storage = struct {
     } = .always_asynchronous;
 
     pub const Read = struct {
-        callback: fn (read: *Storage.Read) void,
+        callback: *const fn (read: *Storage.Read) void,
         buffer: []u8,
         zone: vsr.Zone,
         /// Relative offset within the zone.
@@ -106,7 +109,7 @@ pub const Storage = struct {
     };
 
     pub const Write = struct {
-        callback: fn (write: *Storage.Write) void,
+        callback: *const fn (write: *Storage.Write) void,
         buffer: []const u8,
         zone: vsr.Zone,
         /// Relative offset within the zone.
@@ -125,7 +128,7 @@ pub const Storage = struct {
     pub const NextTick = struct {
         next: ?*NextTick = null,
         source: NextTickSource,
-        callback: fn (next_tick: *NextTick) void,
+        callback: *const fn (next_tick: *NextTick) void,
     };
 
     pub const NextTickSource = enum { lsm, vsr };
@@ -281,7 +284,7 @@ pub const Storage = struct {
     pub fn on_next_tick(
         storage: *Storage,
         source: NextTickSource,
-        callback: fn (next_tick: *Storage.NextTick) void,
+        callback: *const fn (next_tick: *Storage.NextTick) void,
         next_tick: *Storage.NextTick,
     ) void {
         next_tick.* = .{
@@ -305,7 +308,7 @@ pub const Storage = struct {
     /// * Verifies that the read targets sectors that have been written to.
     pub fn read_sectors(
         storage: *Storage,
-        callback: fn (read: *Storage.Read) void,
+        callback: *const fn (read: *Storage.Read) void,
         read: *Storage.Read,
         buffer: []u8,
         zone: vsr.Zone,
@@ -367,7 +370,7 @@ pub const Storage = struct {
 
     pub fn write_sectors(
         storage: *Storage,
-        callback: fn (write: *Storage.Write) void,
+        callback: *const fn (write: *Storage.Write) void,
         write: *Storage.Write,
         buffer: []const u8,
         zone: vsr.Zone,
@@ -503,13 +506,19 @@ pub const Storage = struct {
     ) *const superblock.SuperBlockHeader {
         const offset = vsr.Zone.superblock.offset(superblock.SuperBlockZone.header.start_for_copy(copy_));
         const bytes = storage.memory[offset..][0..comptime superblock.SuperBlockZone.header.size_max()];
-        return mem.bytesAsValue(superblock.SuperBlockHeader, bytes);
+        return @alignCast(
+            @alignOf(superblock.SuperBlockHeader),
+            mem.bytesAsValue(superblock.SuperBlockHeader, bytes),
+        );
     }
 
     pub fn wal_headers(storage: *const Storage) []const vsr.Header {
         const offset = vsr.Zone.wal_headers.offset(0);
         const size = vsr.Zone.wal_headers.size().?;
-        return mem.bytesAsSlice(vsr.Header, storage.memory[offset..][0..size]);
+        return @alignCast(
+            @alignOf(vsr.Header),
+            mem.bytesAsSlice(vsr.Header, storage.memory[offset..][0..size]),
+        );
     }
 
     const MessageRaw = extern struct {
@@ -518,14 +527,17 @@ pub const Storage = struct {
 
         comptime {
             assert(@sizeOf(MessageRaw) == constants.message_size_max);
-            assert(@sizeOf(MessageRaw) * 8 == @bitSizeOf(MessageRaw));
+            assert(stdx.no_padding(MessageRaw));
         }
     };
 
     pub fn wal_prepares(storage: *const Storage) []const MessageRaw {
         const offset = vsr.Zone.wal_prepares.offset(0);
         const size = vsr.Zone.wal_prepares.size().?;
-        return mem.bytesAsSlice(MessageRaw, storage.memory[offset..][0..size]);
+        return @alignCast(
+            @alignOf(MessageRaw),
+            mem.bytesAsSlice(MessageRaw, storage.memory[offset..][0..size]),
+        );
     }
 
     pub fn grid_block(
@@ -543,7 +555,10 @@ pub const Storage = struct {
         assert(block_header.valid_checksum());
         assert(block_header.size <= constants.block_size);
 
-        return storage.memory[block_offset..][0..constants.block_size];
+        return @alignCast(
+            constants.sector_size,
+            storage.memory[block_offset..][0..constants.block_size],
+        );
     }
 
     pub fn log_pending_io(storage: *const Storage) void {
@@ -727,13 +742,13 @@ pub const ClusterFaultAtlas = struct {
     options: Options,
     faulty_superblock_areas: FaultySuperBlockAreas =
         FaultySuperBlockAreas.initFill(CopySet.initEmpty()),
-    faulty_wal_header_sectors: [constants.nodes_max]FaultyWALHeaders =
-        [_]FaultyWALHeaders{FaultyWALHeaders.initEmpty()} ** constants.nodes_max,
-    faulty_client_reply_slots: [constants.nodes_max]FaultyClientReplies =
-        [_]FaultyClientReplies{FaultyClientReplies.initEmpty()} ** constants.nodes_max,
+    faulty_wal_header_sectors: [constants.members_max]FaultyWALHeaders =
+        [_]FaultyWALHeaders{FaultyWALHeaders.initEmpty()} ** constants.members_max,
+    faulty_client_reply_slots: [constants.members_max]FaultyClientReplies =
+        [_]FaultyClientReplies{FaultyClientReplies.initEmpty()} ** constants.members_max,
     /// Bit 0 corresponds to address 1.
-    faulty_grid_blocks: [constants.nodes_max]FaultyGridBlocks =
-        [_]FaultyGridBlocks{FaultyGridBlocks.initEmpty()} ** constants.nodes_max,
+    faulty_grid_blocks: [constants.members_max]FaultyGridBlocks =
+        [_]FaultyGridBlocks{FaultyGridBlocks.initEmpty()} ** constants.members_max,
 
     pub fn init(replica_count: u8, random: std.rand.Random, options: Options) ClusterFaultAtlas {
         if (replica_count == 1) {
@@ -787,8 +802,8 @@ pub const ClusterFaultAtlas = struct {
 
         var block: usize = 0;
         while (block < superblock.grid_blocks_max) : (block += 1) {
-            var replicas = std.StaticBitSet(constants.nodes_max).initEmpty();
-            while (replicas.count() + 1 < quorums.replication) {
+            var replicas = std.StaticBitSet(constants.members_max).initEmpty();
+            while (replicas.count() < faults_max) {
                 replicas.set(random.uintLessThan(usize, replica_count));
             }
 

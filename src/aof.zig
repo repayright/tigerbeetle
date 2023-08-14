@@ -24,21 +24,17 @@ const magic_number: u128 = 312960301372567410560647846651901451202;
 
 /// On-disk format for AOF Metadata.
 pub const AOFEntryMetadata = extern struct {
-    comptime {
-        assert(@bitSizeOf(AOFEntryMetadata) == @sizeOf(AOFEntryMetadata) * 8);
-    }
-
     primary: u64,
     replica: u64,
-    reserved: [64]u8 = std.mem.zeroes([64]u8),
+    // Use large padding here to align the message itself to the sector boundary.
+    reserved: [4064]u8 = std.mem.zeroes([4064]u8),
+
+    comptime {
+        assert(stdx.no_padding(AOFEntryMetadata));
+    }
 };
 
-/// On-disk format for full AOF Entry.
 pub const AOFEntry = extern struct {
-    comptime {
-        assert(@bitSizeOf(AOFEntry) == @sizeOf(AOFEntry) * 8);
-    }
-
     /// In case of extreme corruption, start each entry with a fixed random integer,
     /// to allow skipping over corrupted entries.
     magic_number: u128 = magic_number,
@@ -49,6 +45,10 @@ pub const AOFEntry = extern struct {
     /// The main Message to log. The actual length of the entire payload will be sector
     /// aligned, so we might write past what the VSR header in here indicates.
     message: [constants.message_size_max]u8 align(constants.sector_size),
+
+    comptime {
+        assert(stdx.no_padding(AOFEntry));
+    }
 
     /// Calculate the actual length of the AOFEntry that needs to be written to disk,
     /// accounting for sector alignment.
@@ -79,14 +79,14 @@ pub const AOFEntry = extern struct {
         // When writing, entries can backtrack / duplicate, so we don't necessarily have a valid
         // chain. Still, log when that happens. The `aof merge` command can generate a consistent
         // file from entries like these.
-        log.debug("{}: from_message: parent {} (should == {}) our checksum {}", .{
+        log.debug("{}: from_message: parent {} (should == {?}) our checksum {}", .{
             options.replica,
             message.header.parent,
             last_checksum.*,
             message.header.checksum,
         });
         if (last_checksum.* == null or last_checksum.*.? != message.header.parent) {
-            log.info("{}: from_message: parent {}, expected {} instead", .{
+            log.info("{}: from_message: parent {}, expected {?} instead", .{
                 options.replica,
                 message.header.parent,
                 last_checksum.*,
@@ -276,7 +276,7 @@ pub const AOF = struct {
     /// that both the header and body checksums of the read entry are valid, and that
     /// all checksums chain correctly.
     pub fn iterator(path: []const u8) !Iterator {
-        const file = try std.fs.cwd().openFile(path, .{ .read = true });
+        const file = try std.fs.cwd().openFile(path, .{ .mode = .read_only });
         errdefer file.close();
 
         const size = (try file.stat()).size;
@@ -347,7 +347,7 @@ pub const AOFReplayClient = struct {
         while (try aof.next(&target)) |entry| {
             // Skip replaying reserved messages.
             const header = entry.header();
-            if (header.operation.reserved()) continue;
+            if (header.operation.vsr_reserved()) continue;
 
             const message = self.client.get_message();
             defer self.client.unref(message);
@@ -397,7 +397,7 @@ pub fn aof_merge(
 ) !void {
     const stdout = std.io.getStdOut().writer();
 
-    var aofs: [constants.nodes_max]AOF.Iterator = undefined;
+    var aofs: [constants.members_max]AOF.Iterator = undefined;
     var aof_count: usize = 0;
     defer for (aofs[0..aof_count]) |*it| it.close();
 
@@ -570,7 +570,7 @@ pub fn aof_merge(
     }
 
     try stdout.print(
-        "AOF {s} validated. Starting checksum: {} Ending checksum: {}\n",
+        "AOF {s} validated. Starting checksum: {?} Ending checksum: {?}\n",
         .{ output_path, first_checksum, last_checksum },
     );
 }
@@ -613,6 +613,7 @@ test "aof write / read" {
     demo_message.header.set_checksum();
 
     try aof.write(demo_message, .{ .replica = 1, .primary = 1 });
+    aof.close();
 
     var it = try AOF.iterator(aof_file);
     defer it.close();
@@ -684,18 +685,18 @@ const usage =
 ;
 
 pub fn main() !void {
-    var args = std.process.args();
-
-    var action: ?[:0]const u8 = null;
-    var addresses: ?[:0]const u8 = null;
-    var paths: [constants.nodes_max][:0]const u8 = undefined;
-    var count: usize = 0;
-
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
 
-    while (args.next(allocator)) |arg_or_err| {
-        const arg = try arg_or_err;
+    var args = try std.process.argsWithAllocator(allocator);
+    defer args.deinit();
+
+    var action: ?[:0]const u8 = null;
+    var addresses: ?[:0]const u8 = null;
+    var paths: [constants.members_max][:0]const u8 = undefined;
+    var count: usize = 0;
+
+    while (args.next()) |arg| {
         if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
             std.io.getStdOut().writeAll(usage) catch os.exit(1);
             os.exit(0);

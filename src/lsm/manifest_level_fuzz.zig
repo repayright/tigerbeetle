@@ -25,13 +25,13 @@
 //!
 const std = @import("std");
 const assert = std.debug.assert;
-const allocator = std.testing.allocator;
 
 const log = std.log.scoped(.lsm_manifest_level_fuzz);
 const constants = @import("../constants.zig");
 const fuzz = @import("../testing/fuzz.zig");
 const binary_search = @import("binary_search.zig");
 const lsm = @import("tree.zig");
+const allocator = fuzz.allocator;
 
 const Key = u64;
 const Value = struct {
@@ -122,7 +122,7 @@ fn generate_fuzz_ops(
         .remove_invisible = 3,
         .remove_visible = 3,
     };
-    log.info("fuzz_op_distribution = {d:.2}", .{fuzz_op_distribution});
+    log.info("fuzz_op_distribution = {:.2}", .{fuzz_op_distribution});
 
     var ctx = GenerateContext{ .max_inserted = table_count_max, .random = random };
     for (fuzz_ops) |*fuzz_op| {
@@ -144,7 +144,7 @@ const GenerateContext = struct {
         switch (fuzz_op_tag) {
             .insert_tables => {
                 // If there's no room for new tables, existing ones should be removed.
-                const insertable = @minimum(ctx.max_inserted - ctx.inserted, max_tables_per_insert);
+                const insertable = @min(ctx.max_inserted - ctx.inserted, max_tables_per_insert);
                 if (insertable == 0) {
                     // Decide whether to remove visible or invisible tables:
                     if (ctx.invisible > 0) return ctx.next(.remove_invisible);
@@ -317,7 +317,7 @@ pub fn EnvironmentType(comptime table_count_max: u32, comptime node_size: u32) t
 
             // Insert the generated tables into the Environment for reference:
             for (tables) |*table| {
-                const index = binary_search.binary_search_values_raw(
+                const index = binary_search.binary_search_values_upsert_index(
                     Key,
                     TableInfo,
                     key_min_from_table,
@@ -340,7 +340,7 @@ pub fn EnvironmentType(comptime table_count_max: u32, comptime node_size: u32) t
             var new_key_min = key + env.random.uintLessThanBiased(Key, 31) + 1;
             assert(compare_keys(new_key_min, key) == .gt);
 
-            var i = binary_search.binary_search_values_raw(
+            var i = binary_search.binary_search_values_upsert_index(
                 Key,
                 TableInfo,
                 key_min_from_table,
@@ -364,7 +364,7 @@ pub fn EnvironmentType(comptime table_count_max: u32, comptime node_size: u32) t
                 }
             } else std.math.maxInt(Key);
 
-            const max_delta = @minimum(32, next_key_min - 1 - new_key_min);
+            const max_delta = @min(32, next_key_min - 1 - new_key_min);
             const new_key_max = new_key_min + env.random.uintAtMostBiased(Key, max_delta);
 
             return .{
@@ -416,7 +416,7 @@ pub fn EnvironmentType(comptime table_count_max: u32, comptime node_size: u32) t
         }
 
         fn find_exact(env: *Environment, level_table: *const TableInfo) *TableInfo {
-            const index = binary_search.binary_search_values_raw(
+            const index = binary_search.binary_search_values_upsert_index(
                 Key,
                 TableInfo,
                 key_min_from_table,

@@ -422,7 +422,7 @@ pub fn ReplicaType(
         /// Used by `Cluster` in the simulator.
         test_context: ?*anyopaque = null,
         /// Simulator hooks.
-        event_callback: ?fn (replica: *const Self, event: ReplicaEvent) void = null,
+        event_callback: ?*const fn (replica: *const Self, event: ReplicaEvent) void = null,
 
         /// The prepare message being committed.
         commit_prepare: ?*Message = null,
@@ -717,7 +717,7 @@ pub fn ReplicaType(
             assert(replica_count > 0);
             assert(replica_count <= constants.replicas_max);
             assert(standby_count <= constants.standbys_max);
-            assert(node_count <= constants.nodes_max);
+            assert(node_count <= constants.members_max);
 
             const replica_index = options.replica_index;
             assert(replica_index < node_count);
@@ -944,10 +944,8 @@ pub fn ReplicaType(
             self.grid.deinit(allocator);
             defer self.message_bus.deinit(allocator);
 
-            // TODO(Zig) 0.10: inline-switch.
             switch (self.pipeline) {
-                .queue => |*pipeline| pipeline.deinit(self.message_bus.pool),
-                .cache => |*pipeline| pipeline.deinit(self.message_bus.pool),
+                inline else => |*pipeline| pipeline.deinit(self.message_bus.pool),
             }
 
             if (self.loopback_queue) |loopback_message| {
@@ -1647,14 +1645,16 @@ pub fn ReplicaType(
                 self.op_checkpoint());
             DVCQuorum.verify(self.do_view_change_from_all_replicas);
 
-            const op_head = switch (DVCQuorum.quorum_headers(
+            // Store in a var so that `.complete_valid` can capture a mutable pointer in switch.
+            var headers = DVCQuorum.quorum_headers(
                 self.do_view_change_from_all_replicas,
                 .{
                     .quorum_nack_prepare = self.quorum_nack_prepare,
                     .quorum_view_change = self.quorum_view_change,
                     .replica_count = self.replica_count,
                 },
-            )) {
+            );
+            const op_head = switch (headers) {
                 .awaiting_quorum => {
                     log.debug("{}: on_do_view_change: view={} waiting for quorum", .{
                         self.replica,
@@ -3010,7 +3010,7 @@ pub fn ReplicaType(
         /// round-robin in order to avoid a resonance.
         fn choose_any_other_replica(self: *Self) u8 {
             assert(!self.solo());
-            comptime assert(constants.nodes_max * 2 < std.math.maxInt(u8));
+            comptime assert(constants.members_max * 2 < std.math.maxInt(u8));
 
             // Carefully select any replica if we are a standby,
             // and any different replica if we are active.
@@ -3317,7 +3317,7 @@ pub fn ReplicaType(
                 @src(),
             );
 
-            if (prepare.header.operation.reserved()) {
+            if (prepare.header.operation.vsr_reserved()) {
                 // NOTE: this inline callback is fine because the next stage of committing,
                 // `.setup_client_replies`, is always async.
                 commit_op_prefetch_callback(&self.state_machine);
@@ -3599,17 +3599,19 @@ pub fn ReplicaType(
                 }) catch @panic("aof failure");
             }
 
-            const reply_body_size = if (prepare.header.operation.reserved())
-                0
-            else
-                @intCast(u32, self.state_machine.commit(
+            const reply_body_size = switch (prepare.header.operation) {
+                .reserved, .root => unreachable,
+                .register => 0,
+                .reconfigure => self.commit_reconfiguration(prepare, reply.buffer[@sizeOf(Header)..]),
+                else => self.state_machine.commit(
                     prepare.header.client,
                     prepare.header.op,
                     prepare.header.timestamp,
                     prepare.header.operation.cast(StateMachine),
                     prepare.buffer[@sizeOf(Header)..prepare.header.size],
                     reply.buffer[@sizeOf(Header)..],
-                ));
+                ),
+            };
 
             assert(self.state_machine.commit_timestamp <= prepare.header.timestamp or constants.aof_recovery);
             self.state_machine.commit_timestamp = prepare.header.timestamp;
@@ -3632,7 +3634,7 @@ pub fn ReplicaType(
                 .op = prepare.header.op,
                 .timestamp = prepare.header.timestamp,
                 .commit = prepare.header.op,
-                .size = @sizeOf(Header) + reply_body_size,
+                .size = @sizeOf(Header) + @intCast(u32, reply_body_size),
             };
             assert(reply.header.epoch == 0);
 
@@ -3669,6 +3671,37 @@ pub fn ReplicaType(
                 log.debug("{}: commit_op: replying to client: {}", .{ self.replica, reply.header });
                 self.send_reply_message_to_client(reply);
             }
+        }
+
+        // The actual "execution" was handled by the primary when the request was prepared.
+        // Primary makes use of local information to decide whether reconfiguration should be accepted.
+        // Here, we just copy over the result.
+        fn commit_reconfiguration(
+            self: *Self,
+            prepare: *const Message,
+            output_buffer: *align(16) [constants.message_body_size_max]u8,
+        ) usize {
+            assert(self.commit_stage == .setup_client_replies);
+            assert(self.commit_prepare.? == prepare);
+            assert(prepare.header.command == .prepare);
+            assert(prepare.header.operation == .reconfigure);
+            assert(prepare.header.size == @sizeOf(vsr.Header) + @sizeOf(vsr.ReconfigurationRequest));
+            assert(prepare.header.op == self.commit_min + 1);
+            assert(prepare.header.op <= self.op);
+
+            const reconfiguration_request = std.mem.bytesAsValue(
+                vsr.ReconfigurationRequest,
+                prepare.body()[0..@sizeOf(vsr.ReconfigurationRequest)],
+            );
+            assert(reconfiguration_request.result != .reserved);
+
+            const result = std.mem.bytesAsValue(
+                vsr.ReconfigurationResult,
+                output_buffer[0..@sizeOf(vsr.ReconfigurationResult)],
+            );
+
+            result.* = reconfiguration_request.result;
+            return @sizeOf(vsr.ReconfigurationResult);
         }
 
         /// Creates an entry in the client table when registering a new client session.
@@ -4202,7 +4235,7 @@ pub fn ReplicaType(
             }
 
             if (self.status != .normal) {
-                log.debug("{}: on_request: ignoring ({s})", .{ self.replica, self.status });
+                log.debug("{}: on_request: ignoring ({})", .{ self.replica, self.status });
                 return true;
             }
 
@@ -5073,11 +5106,14 @@ pub fn ReplicaType(
             );
             assert(self.state_machine.prepare_timestamp > self.state_machine.commit_timestamp);
 
-            if (!message.header.operation.reserved()) {
-                self.state_machine.prepare(
+            switch (message.header.operation) {
+                .reserved, .root => unreachable,
+                .register => {},
+                .reconfigure => self.primary_prepare_reconfiguration(message),
+                else => self.state_machine.prepare(
                     message.header.operation.cast(StateMachine),
                     message.body(),
-                );
+                ),
             }
             const prepare_timestamp = self.state_machine.prepare_timestamp;
 
@@ -5123,6 +5159,24 @@ pub fn ReplicaType(
             // We expect `on_prepare()` to increment `self.op` to match the primary's latest prepare:
             // This is critical to ensure that pipelined prepares do not receive the same op number.
             assert(self.op == message.header.op);
+        }
+
+        fn primary_prepare_reconfiguration(self: *const Self, request: *Message) void {
+            assert(self.primary());
+            assert(request.header.command == .request);
+            assert(request.header.operation == .reconfigure);
+            assert(request.header.size == @sizeOf(vsr.Header) + @sizeOf(vsr.ReconfigurationRequest));
+            const reconfiguration_request = std.mem.bytesAsValue(
+                vsr.ReconfigurationRequest,
+                request.body()[0..@sizeOf(vsr.ReconfigurationRequest)],
+            );
+            reconfiguration_request.*.result = reconfiguration_request.validate(.{
+                .members = &self.superblock.working.vsr_state.members,
+                .epoch = 0,
+                .replica_count = self.replica_count,
+                .standby_count = self.standby_count,
+            });
+            assert(reconfiguration_request.result != .reserved);
         }
 
         /// Returns the next prepare in the pipeline waiting for a quorum.
@@ -5987,7 +6041,7 @@ pub fn ReplicaType(
                 received.* = null;
             }
             assert(count <= self.replica_count);
-            log.debug("{}: reset {} {s} message(s) from view={}", .{
+            log.debug("{}: reset {} {s} message(s) from view={?}", .{
                 self.replica,
                 count,
                 @tagName(command),
@@ -7470,7 +7524,7 @@ pub fn ReplicaType(
         /// sync_dispatch() is called between every sync-state transition.
         fn sync_dispatch(self: *Self, state_new: SyncStage) void {
             assert(!self.solo());
-            assert(self.syncing.valid_transition(state_new));
+            assert(SyncStage.valid_transition(self.syncing, state_new));
             if (self.op < self.commit_min) assert(self.status == .recovering_head);
 
             const state_old = self.syncing;
@@ -8215,7 +8269,7 @@ pub fn ReplicaType(
             assert(trailer_size > parameters.offset or
                 (trailer_size == 0 and parameters.offset == 0));
 
-            const body_size = @intCast(u32, @minimum(
+            const body_size = @intCast(u32, @min(
                 trailer_size - parameters.offset,
                 constants.sync_trailer_message_body_size_max,
             ));
@@ -8415,13 +8469,13 @@ const DVCQuorum = struct {
 
         const nacks = message.header.context;
         comptime assert(@TypeOf(nacks) == u128);
-        assert(@popCount(u128, nacks) <= headers.slice.len);
-        assert(@clz(u128, nacks) + headers.slice.len >= @bitSizeOf(u128));
+        assert(@popCount(nacks) <= headers.slice.len);
+        assert(@clz(nacks) + headers.slice.len >= @bitSizeOf(u128));
 
         const present = message.header.client;
         comptime assert(@TypeOf(present) == u128);
-        assert(@popCount(u128, present) <= headers.slice.len);
-        assert(@clz(u128, present) + headers.slice.len >= @bitSizeOf(u128));
+        assert(@popCount(present) <= headers.slice.len);
+        assert(@clz(present) + headers.slice.len >= @bitSizeOf(u128));
     }
 
     fn dvcs_all(dvc_quorum: QuorumMessages) DVCArray {
@@ -8805,11 +8859,11 @@ const PipelineQueue = struct {
 
     /// Messages that are preparing (uncommitted, being written to the WAL (may already be written
     /// to the WAL) and replicated (may just be waiting for acks)).
-    prepare_queue: PrepareQueue = .{},
+    prepare_queue: PrepareQueue = PrepareQueue.init(),
     /// Messages that are accepted from the client, but not yet preparing.
     /// When `pipeline_prepare_queue_max + pipeline_request_queue_max = clients_max`, the request
     /// queue guards against clients starving one another.
-    request_queue: RequestQueue = .{},
+    request_queue: RequestQueue = RequestQueue.init(),
 
     fn deinit(pipeline: *PipelineQueue, message_pool: *MessagePool) void {
         while (pipeline.request_queue.pop()) |r| message_pool.unref(r.message);

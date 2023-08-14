@@ -60,7 +60,7 @@ pub fn StateMachineType(
         commit_timestamp: u64 = 0,
 
         prefetch_context: ThingGroove.PrefetchContext = undefined,
-        callback: ?fn (state_machine: *StateMachine) void = null,
+        callback: ?*const fn (state_machine: *StateMachine) void = null,
 
         pub fn init(allocator: std.mem.Allocator, grid: *Grid, options: Options) !StateMachine {
             var forest = try Forest.init(
@@ -98,7 +98,7 @@ pub fn StateMachineType(
             };
         }
 
-        pub fn open(state_machine: *StateMachine, callback: fn (*StateMachine) void) void {
+        pub fn open(state_machine: *StateMachine, callback: *const fn (*StateMachine) void) void {
             assert(state_machine.callback == null);
 
             state_machine.callback = callback;
@@ -125,12 +125,11 @@ pub fn StateMachineType(
 
         pub fn prefetch(
             state_machine: *StateMachine,
-            callback: fn (*StateMachine) void,
+            callback: *const fn (*StateMachine) void,
             op: u64,
             operation: Operation,
             input: []align(16) const u8,
         ) void {
-            _ = op;
             _ = operation;
             _ = input;
 
@@ -182,7 +181,7 @@ pub fn StateMachineType(
 
         pub fn compact(
             state_machine: *StateMachine,
-            callback: fn (*StateMachine) void,
+            callback: *const fn (*StateMachine) void,
             op: u64,
         ) void {
             assert(op != 0);
@@ -202,7 +201,7 @@ pub fn StateMachineType(
 
         pub fn checkpoint(
             state_machine: *StateMachine,
-            callback: fn (*StateMachine) void,
+            callback: *const fn (*StateMachine) void,
         ) void {
             assert(state_machine.callback == null);
 

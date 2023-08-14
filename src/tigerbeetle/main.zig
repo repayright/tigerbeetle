@@ -148,7 +148,7 @@ const Command = struct {
             aof = try AOF.from_absolute_path(aof_path);
         }
 
-        const grid_cache_size = args.cache_grid_blocks * constants.block_size;
+        const grid_cache_size = @as(u64, args.cache_grid_blocks) * constants.block_size;
         const grid_cache_size_warn = 1024 * 1024 * 1024;
         if (grid_cache_size <= grid_cache_size_warn) {
             log_main.warn("Grid cache size of {}MB is small. See --cache-grid", .{
@@ -156,11 +156,7 @@ const Command = struct {
             });
         }
 
-        const nonce = while (true) {
-            // `random.uintLessThan` does not work for u128 as of Zig 0.9.1.x.
-            const nonce_or_zero = std.crypto.random.int(u128);
-            if (nonce_or_zero != 0) break nonce_or_zero;
-        } else unreachable;
+        const nonce = std.crypto.random.int(u128) +| 1;
         assert(nonce != 0);
 
         var replica: Replica = undefined;
@@ -232,7 +228,7 @@ const Command = struct {
         const stdout = stdout_buffer.writer();
         try std.fmt.format(
             stdout,
-            "TigerBeetle version {s}",
+            "TigerBeetle version {s}\n",
             .{build_options.git_tag orelse "experimental"},
         );
 
@@ -251,16 +247,15 @@ const Command = struct {
                 try print_value(stdout, "build." ++ declaration, @field(builtin, declaration));
             }
 
-            // TODO(Zig): Use meta.fieldNames() after upgrading to 0.10.
-            // See: https://github.com/ziglang/zig/issues/10235
+            // Zig 0.10 doesn't see field_name as comptime if this `comptime` isn't used.
             try stdout.writeAll("\n");
-            inline for (std.meta.fields(@TypeOf(config.cluster))) |field| {
-                try print_value(stdout, "cluster." ++ field.name, @field(config.cluster, field.name));
+            inline for (comptime std.meta.fieldNames(@TypeOf(config.cluster))) |field_name| {
+                try print_value(stdout, "cluster." ++ field_name, @field(config.cluster, field_name));
             }
 
             try stdout.writeAll("\n");
-            inline for (std.meta.fields(@TypeOf(config.process))) |field| {
-                try print_value(stdout, "process." ++ field.name, @field(config.process, field.name));
+            inline for (comptime std.meta.fieldNames(@TypeOf(config.process))) |field_name| {
+                try print_value(stdout, "process." ++ field_name, @field(config.process, field_name));
             }
         }
         try stdout_buffer.flush();
@@ -269,8 +264,8 @@ const Command = struct {
 
 fn print_value(
     writer: anytype,
-    comptime field: []const u8,
-    comptime value: anytype,
+    field: []const u8,
+    value: anytype,
 ) !void {
     switch (@typeInfo(@TypeOf(value))) {
         .Fn => {}, // Ignore the log() function.
@@ -278,7 +273,7 @@ fn print_value(
             field,
             std.fmt.fmtSliceEscapeLower(value),
         }),
-        else => try std.fmt.format(writer, "{s}={}\n", .{
+        else => try std.fmt.format(writer, "{s}={any}\n", .{
             field,
             value,
         }),

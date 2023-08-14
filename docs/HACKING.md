@@ -20,6 +20,11 @@ With TigerBeetle installed, you are ready to benchmark!
 scripts/benchmark.sh
 ```
 
+If you're on Windows, run `.\scripts\benchmark.bat`.
+
+See comments at the top of [/src/benchmark.zig](/src/benchmark.zig)
+for exactly what we're benchmarking.
+
 *If you encounter any benchmark errors, please send us the resulting `benchmark.log`.*
 
 ## Running the server
@@ -50,6 +55,19 @@ To run the unit tests:
 
 ```bash
 zig/zig build test
+```
+
+To run a single test by name:
+
+```bash
+zig/zig build test:unit -Dtest-filter="name of test"
+```
+
+To run tests with code coverage (assuming `kcov` is installed on your system):
+
+```bash
+COV=1 zig/zig build test
+open kcov-output/index.html
 ```
 
 The [Setup](#setup) step above will install Zig for you to the root of the `tigerbeetle` directory.
@@ -103,7 +121,7 @@ The `client_integration` target in build.zig helps with running the
 sample programs for each client as an integration test.
 
 ```bash
-./scripts/build.sh client_integration -- --language go --sample basic
+./zig/zig build client_integration -- --language go --sample basic
 ```
 
 See [the src/clients/README.md

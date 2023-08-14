@@ -35,7 +35,7 @@ const replica = 0;
 const replica_count = 6;
 
 pub fn main() !void {
-    const allocator = std.testing.allocator;
+    const allocator = fuzz.allocator;
     const args = try fuzz.parse_fuzz_args(allocator);
 
     // Total calls to checkpoint() + view_change().
@@ -173,7 +173,7 @@ const Environment = struct {
 
     sequence_states: SequenceStates,
 
-    members: [constants.nodes_max]u128,
+    members: vsr.Members,
 
     superblock: *SuperBlock,
     superblock_verify: *SuperBlock,
@@ -344,8 +344,12 @@ const Environment = struct {
 
         var vsr_headers = vsr.Headers.Array{ .buffer = undefined };
         var vsr_head = std.mem.zeroInit(vsr.Header, .{
+            .client = 1,
+            .request = 1,
             .command = .prepare,
-            .op = env.superblock.staging.vsr_state.commit_min,
+            .operation = @intToEnum(vsr.Operation, constants.vsr_operations_reserved + 1),
+            .op = env.superblock.staging.vsr_state.commit_min + 1,
+            .timestamp = 1,
         });
         vsr_head.set_checksum_body(&.{});
         vsr_head.set_checksum();

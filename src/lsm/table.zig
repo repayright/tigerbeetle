@@ -61,7 +61,7 @@ pub fn TableType(
     comptime table_tombstone_from_key: fn (TableKey) callconv(.Inline) TableValue,
     /// The maximum number of values per table.
     comptime table_value_count_max: usize,
-    comptime usage: TableUsage,
+    comptime table_usage: TableUsage,
 ) type {
     return struct {
         const Table = @This();
@@ -75,7 +75,7 @@ pub fn TableType(
         pub const tombstone = table_tombstone;
         pub const tombstone_from_key = table_tombstone_from_key;
         pub const value_count_max = table_value_count_max;
-        pub const usage = usage;
+        pub const usage = table_usage;
 
         // Export hashmap context for Key and Value
         pub const HashMapContextValue = struct {
@@ -96,8 +96,8 @@ pub fn TableType(
             // TODO(ifreund) What are our alignment expectations for Value?
 
             // There must be no padding in the Key/Value types to avoid buffer bleeds.
-            assert(@bitSizeOf(Key) == @sizeOf(Key) * 8);
-            assert(@bitSizeOf(Value) == @sizeOf(Value) * 8);
+            assert(stdx.no_padding(Key));
+            assert(stdx.no_padding(Value));
 
             // These impact our calculation of:
             // * the superblock trailer size, and
@@ -693,7 +693,7 @@ pub fn TableType(
             // want to return that data block. If the search does not find an exact match
             // it returns the index of the next greatest key, which again is the index of the
             // data block that may contain the key.
-            const data_block_index = binary_search.binary_search_keys_raw(
+            const data_block_index = binary_search.binary_search_keys_upsert_index(
                 Key,
                 compare_keys,
                 Table.index_data_keys_used(index_block),
@@ -842,6 +842,5 @@ test "Table" {
         .general,
     );
 
-    _ = Table;
     std.testing.refAllDecls(Table.Builder);
 }

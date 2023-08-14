@@ -764,7 +764,7 @@ fn BitIterator(comptime Bits: type) type {
         inline fn next(it: *Self) ?BitIndex {
             if (it.bits == 0) return null;
             // This @intCast() is safe since we never pass 0 to @ctz().
-            const index = @intCast(BitIndex, @ctz(Bits, it.bits));
+            const index = @intCast(BitIndex, @ctz(it.bits));
             // Zero the lowest set bit.
             it.bits &= it.bits - 1;
             return index;
@@ -820,7 +820,7 @@ fn search_tags_test(comptime Key: type, comptime Value: type, comptime layout: L
                     count += 1;
                 }
             }
-            assert(@popCount(SAC.Ways, bits) == count);
+            assert(@popCount(bits) == count);
             return bits;
         }
     };
