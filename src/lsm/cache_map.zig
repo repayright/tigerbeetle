@@ -27,7 +27,7 @@ pub fn CacheMap(
     comptime tombstone_from_key: fn (Key) callconv(.Inline) Value,
     comptime tombstone: fn (*const Value) callconv(.Inline) bool,
 ) type {
-    const Cache = SetAssociativeCache(
+    const _Cache = SetAssociativeCache(
         Key,
         Value,
         key_from_value,
@@ -37,7 +37,7 @@ pub fn CacheMap(
     );
 
     const load_factor = 50;
-    const Map = stdx.HashMapUnmanaged(
+    const _Map = stdx.HashMapUnmanaged(
         Value,
         void,
         HashMapContextValue,
@@ -47,8 +47,8 @@ pub fn CacheMap(
     return struct {
         const Self = @This();
 
-        pub const Cache = Cache;
-        pub const Map = Map;
+        pub const Cache = _Cache;
+        pub const Map = _Map;
 
         pub const CacheMapOptions = struct {
             cache_value_count_max: u32,

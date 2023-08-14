@@ -93,9 +93,6 @@ pub fn TreeType(comptime TreeTable: type, comptime Storage: type) type {
         pub const TableMemory = @import("table_memory.zig").TableMemoryType(Table);
         const KeyRange = Manifest.KeyRange;
 
-        pub const TableMutable = @import("table_mutable.zig").TableMutableType(Table);
-        const TableImmutable = @import("table_immutable.zig").TableImmutableType(Table);
-
         const CompactionType = @import("compaction.zig").CompactionType;
         const Compaction = CompactionType(Table, Tree, Storage);
         pub const LookupMemoryResult = union(enum) {
