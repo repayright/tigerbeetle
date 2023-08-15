@@ -3894,8 +3894,7 @@ pub fn ReplicaType(
             }
 
             message.header.* = .{
-                .size = @as(u32, @intCast(@as(usize, @sizeOf(Header)) *
-                    (1 + @as(usize, self.view_headers.array.len)))),
+                .size = @as(u32, @sizeOf(Header)) * (1 + @as(u32, self.view_headers.array.len)),
                 .command = command,
                 .cluster = self.cluster,
                 .replica = self.replica,

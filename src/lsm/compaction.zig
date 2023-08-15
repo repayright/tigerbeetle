@@ -315,7 +315,7 @@ pub fn CompactionType(
             else
                 // +1 to count the input table from level A.
                 context.grid.reserve(
-                    (context.range_b.tables.len + 1) * Table.block_count_max,
+                    (@as(usize, context.range_b.tables.len) + 1) * Table.block_count_max,
                 ).?;
 
             // Levels may choose to drop tombstones if keys aren't included in the lower levels.
