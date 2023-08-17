@@ -283,7 +283,7 @@ fn echo_command(child: *const std.ChildProcess) void {
     assert(child.stdout_behavior == .Inherit);
 
     std.debug.print("$ ", .{});
-    for (child.argv) |arg, i| {
+    for (child.argv, 0..) |arg, i| {
         if (i != 0) std.debug.print(" ", .{});
         std.debug.print("{s}", .{arg});
     }
